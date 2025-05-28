@@ -89,6 +89,27 @@ WorldManager.initialize({
 });
 ```
 
+### Environment Configuration
+
+To use LLM features, you need to configure API keys for the supported platforms. Set the following environment variables:
+
+- **OpenAI**: `OPENAI_API_KEY=your_openai_api_key`
+- **Gemini**: `GEMINI_API_KEY=your_gemini_api_key`  
+- **Anthropic**: `ANTHROPIC_API_KEY=your_anthropic_api_key`
+
+You can set these in several ways:
+
+- Set environment variables directly: `OPENAI_API_KEY=sk-... node your-app.js`
+- Use dotenv package with a `.env` file:
+  ```
+  OPENAI_API_KEY=sk-...
+  GEMINI_API_KEY=AI...
+  ANTHROPIC_API_KEY=sk-ant-...
+  ```
+- Set them in your system environment
+
+**Note**: Currently, API keys are shared across all users. In a production environment, you would typically store user-specific API keys.
+
 ## File Structure
 
 The storage system expects the following directory structure:
