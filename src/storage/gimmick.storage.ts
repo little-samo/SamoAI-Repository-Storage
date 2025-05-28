@@ -13,6 +13,7 @@ import {
 import {
   createDeepCopy,
   fileExists,
+  ensureDirectoryExists,
 } from '@little-samo/samo-ai-repository-storage/utils';
 
 /**
@@ -53,6 +54,9 @@ export class GimmickStorage implements GimmickRepository {
    * @param locationIds Array of location IDs to initialize
    */
   public async initialize(locationIds: LocationId[]): Promise<GimmickStorage> {
+    // Ensure states directory exists
+    await ensureDirectoryExists(this.statesBasePath);
+
     const loadPromises = locationIds.map((locationId) =>
       this.loadLocationGimmickData(locationId)
     );

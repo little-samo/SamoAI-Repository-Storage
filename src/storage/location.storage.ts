@@ -21,6 +21,7 @@ import {
 import {
   createDeepCopy,
   fileExists,
+  ensureDirectoryExists,
 } from '@little-samo/samo-ai-repository-storage/utils';
 
 /**
@@ -68,6 +69,9 @@ export class LocationStorage implements LocationRepository {
    * @param modelBaseNames Base names of location model files to load
    */
   public async initialize(modelBaseNames: string[]): Promise<LocationStorage> {
+    // Ensure states directory exists
+    await ensureDirectoryExists(this.statesBasePath);
+
     const loadPromises = modelBaseNames.map((baseName) =>
       this.loadLocationData(`${baseName}.json`)
     );

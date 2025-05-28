@@ -13,6 +13,7 @@ import {
 import {
   createDeepCopy,
   fileExists,
+  ensureDirectoryExists,
 } from '@little-samo/samo-ai-repository-storage/utils';
 
 /**
@@ -58,6 +59,9 @@ export class UserStorage implements UserRepository {
    * @param modelBaseNames Base names of user model files to load
    */
   public async initialize(modelBaseNames: string[]): Promise<UserStorage> {
+    // Ensure states directory exists
+    await ensureDirectoryExists(this.statesBasePath);
+
     const loadPromises = modelBaseNames.map((baseName) =>
       this.loadUserData(`${baseName}.json`)
     );

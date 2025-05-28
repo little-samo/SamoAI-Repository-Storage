@@ -18,6 +18,7 @@ import {
 import {
   createDeepCopy,
   fileExists,
+  ensureDirectoryExists,
 } from '@little-samo/samo-ai-repository-storage/utils';
 
 /**
@@ -64,6 +65,9 @@ export class AgentStorage implements AgentRepository {
    * @param modelBaseNames Base names of agent model files to load
    */
   public async initialize(modelBaseNames: string[]): Promise<AgentStorage> {
+    // Ensure states directory exists
+    await ensureDirectoryExists(this.statesBasePath);
+
     const loadPromises = modelBaseNames.map((baseName) =>
       this.loadAgentData(`${baseName}.json`)
     );

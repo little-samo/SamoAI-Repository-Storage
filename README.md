@@ -118,12 +118,12 @@ your-project/
         └── gimmicks_1.json
 ```
 
-- **models/**: Static entity definitions (agents, users, locations only)
-- **states/**: Dynamic runtime data that changes during execution
+- **models/**: Static entity definitions (agents, users, locations only) - **Must be created manually**
+- **states/**: Dynamic runtime data that changes during execution - **Created automatically if missing**
 - **items/**: Inventory data per entity (format: `items_{entityType}_{entityId}.json`)
 - **gimmicks/**: Gimmick states per location (format: `gimmicks_{locationId}.json`)
 
-**Note**: Items and gimmicks don't have model files - they are created and managed entirely through the state files.
+**Note**: Items and gimmicks don't have model files - they are created and managed entirely through the state files. The `states/` directories will be automatically created during initialization if they don't exist.
 
 ## Learn More
 

@@ -15,6 +15,7 @@ import {
 import {
   createDeepCopy,
   fileExists,
+  ensureDirectoryExists,
 } from '@little-samo/samo-ai-repository-storage/utils';
 
 /**
@@ -68,6 +69,9 @@ export class ItemStorage implements ItemRepository {
    * @param entityKeys Array of entity keys to initialize
    */
   public async initialize(entityKeys: EntityKey[]): Promise<ItemStorage> {
+    // Ensure states directory exists
+    await ensureDirectoryExists(this.statesBasePath);
+
     const loadPromises = entityKeys.map((entityKey) =>
       this.loadOwnerInventory(entityKey)
     );
