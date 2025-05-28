@@ -52,6 +52,6 @@
     "typescript": "^5.7.2"
   },
   "peerDependencies": {
-    "@little-samo/samo-ai": "^0.0.6"
+    "@little-samo/samo-ai": "^0.0.7"
   }
 }
