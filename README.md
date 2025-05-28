@@ -1,98 +1,134 @@
 <div align="center">
   <img src="https://media.githubusercontent.com/media/little-samo/CI/master/assets/characters/samo/profile.png" alt="Little Samo Mascot" width="250" />
-  <h1>SamoAI-Example-CLI</h1>
-  <p><em>An example CLI application for interacting with <a href="https://github.com/little-samo/SamoAI">@little-samo/samo-ai</a> agents in your terminal</em></p>
+  <h1>SamoAI Repository Storage</h1>
+  <p><em>File system-based repository implementations for <a href="https://github.com/little-samo/SamoAI">@little-samo/samo-ai</a></em></p>
 </div>
 
 <p align="center">
   <a href="#features">Features</a> •
   <a href="#installation">Installation</a> •
   <a href="#usage">Usage</a> •
-  <a href="#customization">Customization</a> •
+  <a href="#file-structure">File Structure</a> •
   <a href="#learn-more">Learn More</a> •
   <a href="#license">License</a>
 </p>
 
 ## Features
 
-- Interactive chat with SamoAI agents in your terminal
-- Support for multiple agents that retain their personality and memory
-- Easy-to-use command line interface
-
-<div align="center">
-  <img src="https://media.githubusercontent.com/media/little-samo/CI/master/assets/examples/repositories/SamoAI-Example-CLI/demo/web.gif" alt="Demo of Web Search Gimmick" width="600" />
-  <p><em>Web Search Gimmick Demo</em></p>
-  
-  <img src="https://media.githubusercontent.com/media/little-samo/CI/master/assets/examples/repositories/SamoAI-Example-CLI/demo/x.gif" alt="Demo of MCP Integration" width="600" />
-  <p><em>MCP Integration Demo</em></p>
-</div>
+- File system-based storage for SamoAI entities
+- Persistent memory and state management
+- Support for agents, users, locations, items, and gimmicks
+- TypeScript support with full type safety
 
 ## Installation
 
-1. Install dependencies:
-   ```
-   npm install
-   ```
+Install the package using npm:
 
-2. Set up environment variables:
-   ```
-   cp .env.example .env
-   ```
-   
-   Then edit the `.env` file and add your LLM API keys:
-   ```
-   OPENAI_API_KEY=your_openai_api_key
-   ANTHROPIC_API_KEY=your_anthropic_api_key
-   GOOGLE_AI_API_KEY=your_google_ai_api_key
-   ```
-   
-   At least one API key is required for the agents to function properly.
+```bash
+npm install @little-samo/samo-ai-repository-storage
+```
+
+Or using yarn:
+
+```bash
+yarn add @little-samo/samo-ai-repository-storage
+```
 
 ## Usage
 
-Start a chat session with the default agents (Samo and Nyx) by running:
+### Basic Setup
+
+```typescript
+import {
+  AgentStorage,
+  UserStorage,
+  LocationStorage,
+  ItemStorage,
+  GimmickStorage
+} from '@little-samo/samo-ai-repository-storage';
+import { WorldManager } from '@little-samo/samo-ai';
+
+// Initialize storage instances
+const agentStorage = new AgentStorage(
+  './models/agents',    // Path to agent model files
+  './states/agents'     // Path to agent state files
+);
+
+const userStorage = new UserStorage(
+  './models/users',
+  './states/users'
+);
+
+const locationStorage = new LocationStorage(
+  './models/locations',
+  './states/locations'
+);
+
+const itemStorage = new ItemStorage(
+  './states/items'      // Only state path needed for items
+);
+
+const gimmickStorage = new GimmickStorage(
+  './states/gimmicks'   // Only state path needed for gimmicks
+);
+
+// Initialize with existing data
+await agentStorage.initialize(['samo', 'nyx']); // Load samo.json and nyx.json
+await userStorage.initialize(['lucid']); // Load lucid.json
+await locationStorage.initialize(['empty']);
+await itemStorage.initialize(['agent:1', 'user:1']); // Initialize inventories
+await gimmickStorage.initialize([1]); // Initialize gimmicks for location
+
+// Initialize WorldManager with all repositories
+WorldManager.initialize({
+  agentRepository: agentStorage,
+  gimmickRepository: gimmickStorage,
+  itemRepository: itemStorage,
+  locationRepository: locationStorage,
+  userRepository: userStorage,
+});
+```
+
+## File Structure
+
+The storage system expects the following directory structure:
 
 ```
-npm run chat
+your-project/
+├── models/
+│   ├── agents/
+│   │   ├── samo.json
+│   │   └── nyx.json
+│   ├── users/
+│   │   └── lucid.json
+│   └── locations/
+│       └── empty.json
+└── states/
+    ├── agents/
+    │   ├── samo.json
+    │   └── nyx.json
+    ├── users/
+    │   └── lucid.json
+    ├── locations/
+    │   └── empty.json
+    ├── items/
+    │   ├── items_agent_1.json
+    │   └── items_user_1.json
+    └── gimmicks/
+        └── gimmicks_1.json
 ```
 
-You can also specify which agents to chat with:
+- **models/**: Static entity definitions (agents, users, locations only)
+- **states/**: Dynamic runtime data that changes during execution
+- **items/**: Inventory data per entity (format: `items_{entityType}_{entityId}.json`)
+- **gimmicks/**: Gimmick states per location (format: `gimmicks_{locationId}.json`)
 
-```
-npm run chat -- -- --agents samo
-```
-
-Or:
-
-```
-npm run chat -- -- --agents "samo,nyx"
-```
-
-> **Note:** The double dashes (`-- --`) are important! The first set tells npm that what follows are arguments for the script, and the second set is needed for proper argument parsing within the script itself.
-
-You can exit the chat session by pressing `Ctrl+C`.
-
-## Customization
-
-### Agents
-
-Create or modify agents by adding or editing JSON files in the `models/agents` directory. Example agents like Little Samo can be found in `models/agents/samo.json`.
-
-### Locations
-
-Customize interaction spaces by managing JSON files in the `models/locations` directory. Example: `models/locations/empty.json`.
-
-When running the chat command, you can specify which location to use:
-
-```
-npm run chat -- -- --location custom_location
-```
-
-> **Important:** Remember to include both sets of double dashes (`-- --`) when passing arguments to the chat command.
+**Note**: Items and gimmicks don't have model files - they are created and managed entirely through the state files.
 
 ## Learn More
 
-To learn more about SamoAI, visit the [SamoAI repository](https://github.com/little-samo/SamoAI).
+- [SamoAI Core Library](https://github.com/little-samo/SamoAI) - The main SamoAI framework
+- [SamoAI Example CLI](https://github.com/little-samo/SamoAI-Example-CLI) - Example implementation using this storage library
 
 ## License
 
