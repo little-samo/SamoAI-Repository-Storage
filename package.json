@@ -1,6 +1,6 @@
 {
   "name": "@little-samo/samo-ai-repository-storage",
-  "version": "0.0.6",
+  "version": "0.0.6-rv1",
   "description": "File system-based repository implementations for SamoAI",
   "license": "MIT",
   "repository": {
