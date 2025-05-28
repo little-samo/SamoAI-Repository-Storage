@@ -93,6 +93,8 @@ export class UserStorage implements UserRepository {
       modelPath,
       state: {
         userId: userId,
+        updatedAt: new Date(),
+        createdAt: new Date(),
       },
       statePath,
     };
@@ -254,6 +256,8 @@ export class UserStorage implements UserRepository {
       modelPath,
       state: {
         userId: userId,
+        updatedAt: new Date(),
+        createdAt: new Date(),
       },
       statePath,
     };

@@ -16,9 +16,18 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
-    ".": "./dist/index.js",
-    "./storage": "./dist/storage/index.js",
-    "./utils": "./dist/utils/index.js"
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./storage": {
+      "import": "./dist/storage/index.js",
+      "types": "./dist/storage/index.d.ts"
+    },
+    "./utils": {
+      "import": "./dist/utils/index.js",
+      "types": "./dist/utils/index.d.ts"
+    }
   },
   "files": [
     "dist/",
@@ -52,6 +61,6 @@
     "typescript": "^5.7.2"
   },
   "peerDependencies": {
-    "@little-samo/samo-ai": "^0.0.7"
+    "@little-samo/samo-ai": "^0.0.9"
   }
 }
