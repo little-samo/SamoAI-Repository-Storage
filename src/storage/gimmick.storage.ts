@@ -20,7 +20,7 @@ import {
  * Data structure for gimmick states within a specific location
  */
 interface LocationGimmickData {
-  gimmickStates: Record<GimmickId, GimmickState>;
+  gimmickStates: Map<GimmickId, GimmickState>;
   statePath: string;
 }
 
@@ -28,7 +28,7 @@ interface LocationGimmickData {
  * Database structure for storing gimmick states across multiple locations
  */
 interface GimmickDatabase {
-  locations: Record<LocationId, LocationGimmickData>;
+  locations: Map<LocationId, LocationGimmickData>;
 }
 
 /**
@@ -37,7 +37,7 @@ interface GimmickDatabase {
  */
 export class GimmickStorage implements GimmickRepository {
   private database: GimmickDatabase = {
-    locations: {},
+    locations: new Map(),
   };
 
   private saveInProgress: boolean = false;
@@ -75,18 +75,22 @@ export class GimmickStorage implements GimmickRepository {
       `gimmicks_${locationId}.json`
     );
 
-    this.database.locations[locationId] = {
-      gimmickStates: {},
+    this.database.locations.set(locationId, {
+      gimmickStates: new Map(),
       statePath,
-    };
+    });
 
     try {
       if (await fileExists(statePath)) {
         const stateContent = await fs.readFile(statePath, 'utf-8');
         const stateData = JSON.parse(stateContent);
 
-        this.database.locations[locationId].gimmickStates =
-          stateData.gimmickStates || {};
+        const gimmickStates = stateData.gimmickStates || {};
+        const gimmickStatesMap = new Map<GimmickId, GimmickState>();
+        for (const [key, value] of Object.entries(gimmickStates)) {
+          gimmickStatesMap.set(key as GimmickId, value as GimmickState);
+        }
+        this.database.locations.get(locationId)!.gimmickStates = gimmickStatesMap;
       }
     } catch (error) {
       console.warn(
@@ -145,13 +149,13 @@ export class GimmickStorage implements GimmickRepository {
     try {
       this.saveInProgress = true;
 
-      const locationData = this.database.locations[locationId];
+      const locationData = this.database.locations.get(locationId);
       if (!locationData) {
         throw new Error(`Location gimmick data not found: ${locationId}`);
       }
 
       const stateData = {
-        gimmickStates: locationData.gimmickStates,
+        gimmickStates: Object.fromEntries(locationData.gimmickStates),
       };
 
       const stateJson = JSON.stringify(stateData, null, 2);
@@ -166,7 +170,7 @@ export class GimmickStorage implements GimmickRepository {
    * @param locationId The location ID to ensure exists
    */
   private async ensureLocationExists(locationId: LocationId): Promise<void> {
-    if (!this.database.locations[locationId]) {
+    if (!this.database.locations.has(locationId)) {
       await this.loadLocationGimmickData(locationId);
     }
   }
@@ -181,23 +185,24 @@ export class GimmickStorage implements GimmickRepository {
   ): Promise<GimmickState> {
     await this.ensureLocationExists(locationId);
 
-    const locationData = this.database.locations[locationId];
+    const locationData = this.database.locations.get(locationId)!;
 
-    if (!locationData.gimmickStates[gimmickId]) {
+    if (!locationData.gimmickStates.has(gimmickId)) {
       // Create a new gimmick state
-      locationData.gimmickStates[gimmickId] = {
+      const newGimmickState: GimmickState = {
         locationId,
         gimmickId,
         updatedAt: new Date(),
         createdAt: new Date(),
       };
+      locationData.gimmickStates.set(gimmickId, newGimmickState);
 
       // Save the new state to disk
       await this.saveState(locationId);
     }
 
     // Important: Return a deep copy to prevent external modification
-    return createDeepCopy(locationData.gimmickStates[gimmickId]);
+    return createDeepCopy(locationData.gimmickStates.get(gimmickId)!);
   }
 
   /**
@@ -207,15 +212,16 @@ export class GimmickStorage implements GimmickRepository {
   public async getOrCreateGimmickStates(
     locationId: LocationId,
     gimmickIds: GimmickId[]
-  ): Promise<Record<GimmickId, GimmickState>> {
-    const result: Record<GimmickId, GimmickState> = {};
+  ): Promise<Map<GimmickId, GimmickState>> {
+    const result = new Map<GimmickId, GimmickState>();
 
     await Promise.all(
       gimmickIds.map(async (gimmickId) => {
-        result[gimmickId] = await this.getOrCreateGimmickState(
+        const state = await this.getOrCreateGimmickState(
           locationId,
           gimmickId
         );
+        result.set(gimmickId, state);
       })
     );
 
@@ -235,14 +241,14 @@ export class GimmickStorage implements GimmickRepository {
   ): Promise<void> {
     await this.ensureLocationExists(locationId);
 
-    const locationData = this.database.locations[locationId];
+    const locationData = this.database.locations.get(locationId)!;
 
     // Ensure gimmick state exists
-    if (!locationData.gimmickStates[gimmickId]) {
+    if (!locationData.gimmickStates.has(gimmickId)) {
       await this.getOrCreateGimmickState(locationId, gimmickId);
     }
 
-    const gimmickState = locationData.gimmickStates[gimmickId];
+    const gimmickState = locationData.gimmickStates.get(gimmickId)!;
     gimmickState.occupierType = occupierType;
     gimmickState.occupierId = occupierId;
     gimmickState.occupationUntil = occupationUntil;
