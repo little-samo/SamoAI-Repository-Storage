@@ -3,7 +3,6 @@ import * as path from 'path';
 
 import {
   ItemDataId,
-  ItemOwner,
   ItemRepository,
   ItemModel,
   EntityKey,
@@ -12,6 +11,14 @@ import {
   UserId,
   sleep,
 } from '@little-samo/samo-ai';
+
+/**
+ * Item owner information
+ */
+interface ItemOwner {
+  ownerAgentId: AgentId | null;
+  ownerUserId: UserId | null;
+}
 import {
   createDeepCopy,
   fileExists,
@@ -245,7 +252,7 @@ export class ItemStorage implements ItemRepository {
    * Create a new item for an owner
    */
   public async createItemModel(
-    owner: ItemOwner,
+    ownerEntityKey: EntityKey,
     dataId: ItemDataId,
     count: number
   ): Promise<ItemModel> {
@@ -253,23 +260,22 @@ export class ItemStorage implements ItemRepository {
       throw new Error('Item count must be greater than 0');
     }
 
-    const entityKey = this.getEntityKey(owner);
-    await this.ensureEntityExists(entityKey);
+    await this.ensureEntityExists(ownerEntityKey);
 
-    const ownerData = this.database.owners[entityKey];
+    const ownerData = this.database.owners[ownerEntityKey];
     const itemId = this.nextItemId++;
 
     const newItem: ExtendedItemModel = {
       id: itemId,
       dataId,
-      owner: createDeepCopy(owner),
+      owner: { ownerAgentId: null, ownerUserId: null }, // Placeholder for compatibility
       count,
       createdAt: new Date(),
       updatedAt: new Date(),
     } as ExtendedItemModel;
 
     ownerData.items[String(itemId)] = newItem;
-    await this.saveState(entityKey);
+    await this.saveState(ownerEntityKey);
 
     return createDeepCopy(newItem as ItemModel);
   }
@@ -278,56 +284,61 @@ export class ItemStorage implements ItemRepository {
    * Add to existing item count or create new item
    */
   public async addOrCreateItemModel(
-    owner: ItemOwner,
+    ownerEntityKey: EntityKey,
     dataId: ItemDataId,
-    count: number
+    count: number,
+    options?: {
+      reason?: string;
+    }
   ): Promise<ItemModel> {
     if (count <= 0) {
       throw new Error('Item count must be greater than 0');
     }
 
-    const entityKey = this.getEntityKey(owner);
-    await this.ensureEntityExists(entityKey);
+    await this.ensureEntityExists(ownerEntityKey);
 
-    const ownerData = this.database.owners[entityKey];
+    const ownerData = this.database.owners[ownerEntityKey];
 
     // Check if owner already has this item type
     for (const item of Object.values(ownerData.items)) {
       if (item.dataId === dataId) {
         item.count += count;
         item.updatedAt = new Date();
-        await this.saveState(entityKey);
+        await this.saveState(ownerEntityKey);
         return createDeepCopy(item as ItemModel);
       }
     }
 
     // Create new item if not found
-    return this.createItemModel(owner, dataId, count);
+    return this.createItemModel(ownerEntityKey, dataId, count);
   }
 
   /**
    * Remove items from an owner's inventory
    */
   public async removeItemModel(
-    owner: ItemOwner,
+    ownerEntityKey: EntityKey,
     item: ItemModel,
-    count: number
+    count: number,
+    options?: {
+      reason?: string;
+      force?: boolean;
+    }
   ): Promise<void> {
     if (count <= 0) {
       throw new Error('Remove count must be greater than 0');
     }
 
-    const entityKey = this.getEntityKey(owner);
-    await this.ensureEntityExists(entityKey);
+    await this.ensureEntityExists(ownerEntityKey);
 
     const extendedItem = item as ExtendedItemModel;
-    const ownerData = this.database.owners[entityKey];
+    const ownerData = this.database.owners[ownerEntityKey];
     const itemIdStr = String(extendedItem.id);
     const itemInstance = ownerData.items[itemIdStr];
 
     if (!itemInstance) {
       throw new Error(
-        `Item with id ${extendedItem.id} not found in ${entityKey} inventory`
+        `Item with id ${extendedItem.id} not found in ${ownerEntityKey} inventory`
       );
     }
 
@@ -345,36 +356,37 @@ export class ItemStorage implements ItemRepository {
       delete ownerData.items[itemIdStr];
     }
 
-    await this.saveState(entityKey);
+    await this.saveState(ownerEntityKey);
   }
 
   /**
    * Transfer items between owners
    */
   public async transferItemModel(
-    owner: ItemOwner,
+    ownerEntityKey: EntityKey,
     item: ItemModel,
-    targetOwner: ItemOwner,
-    count: number
+    targetEntityKey: EntityKey,
+    count: number,
+    options?: {
+      reason?: string;
+      force?: boolean;
+    }
   ): Promise<void> {
     if (count <= 0) {
       throw new Error('Transfer count must be greater than 0');
     }
 
-    const ownerKey = this.getEntityKey(owner);
-    const targetOwnerKey = this.getEntityKey(targetOwner);
-
-    await this.ensureEntityExists(ownerKey);
-    await this.ensureEntityExists(targetOwnerKey);
+    await this.ensureEntityExists(ownerEntityKey);
+    await this.ensureEntityExists(targetEntityKey);
 
     const extendedItem = item as ExtendedItemModel;
-    const ownerData = this.database.owners[ownerKey];
+    const ownerData = this.database.owners[ownerEntityKey];
     const itemIdStr = String(extendedItem.id);
     const itemInstance = ownerData.items[itemIdStr];
 
     if (!itemInstance) {
       throw new Error(
-        `Item with id ${extendedItem.id} not found in ${ownerKey} inventory`
+        `Item with id ${extendedItem.id} not found in ${ownerEntityKey} inventory`
       );
     }
 
@@ -385,10 +397,10 @@ export class ItemStorage implements ItemRepository {
     }
 
     // Remove from source owner
-    await this.removeItemModel(owner, item, count);
+    await this.removeItemModel(ownerEntityKey, item, count);
 
     // Add to target owner
-    await this.addOrCreateItemModel(targetOwner, extendedItem.dataId, count);
+    await this.addOrCreateItemModel(targetEntityKey, extendedItem.dataId, count);
   }
 
   /**
