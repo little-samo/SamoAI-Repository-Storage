@@ -86,11 +86,9 @@ export class GimmickStorage implements GimmickRepository {
         const stateData = JSON.parse(stateContent);
 
         const gimmickStates = stateData.gimmickStates || {};
-        const gimmickStatesMap = new Map<GimmickId, GimmickState>();
-        for (const [key, value] of Object.entries(gimmickStates)) {
-          gimmickStatesMap.set(key as GimmickId, value as GimmickState);
-        }
-        this.database.locations.get(locationId)!.gimmickStates = gimmickStatesMap;
+        this.database.locations.get(locationId)!.gimmickStates = new Map(
+          Object.entries(gimmickStates) as [GimmickId, GimmickState][]
+        );
       }
     } catch (error) {
       console.warn(
@@ -217,10 +215,7 @@ export class GimmickStorage implements GimmickRepository {
 
     await Promise.all(
       gimmickIds.map(async (gimmickId) => {
-        const state = await this.getOrCreateGimmickState(
-          locationId,
-          gimmickId
-        );
+        const state = await this.getOrCreateGimmickState(locationId, gimmickId);
         result.set(gimmickId, state);
       })
     );

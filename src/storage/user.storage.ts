@@ -279,7 +279,7 @@ export class UserStorage implements UserRepository {
     // Uses shared API keys from .env regardless of user ID
     // A real implementation would store and retrieve user-specific API keys
     const apiKeys: LlmApiKeyModel[] = [];
-    
+
     if (process.env.OPENAI_API_KEY) {
       apiKeys.push({
         id: 1,
@@ -289,7 +289,7 @@ export class UserStorage implements UserRepository {
         updatedAt: new Date(),
       });
     }
-    
+
     if (process.env.GEMINI_API_KEY) {
       apiKeys.push({
         id: 2,
@@ -299,7 +299,7 @@ export class UserStorage implements UserRepository {
         updatedAt: new Date(),
       });
     }
-    
+
     if (process.env.ANTHROPIC_API_KEY) {
       apiKeys.push({
         id: 3,
@@ -309,7 +309,7 @@ export class UserStorage implements UserRepository {
         updatedAt: new Date(),
       });
     }
-    
+
     return apiKeys;
   }
 

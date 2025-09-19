@@ -10,15 +10,8 @@ import {
   AgentId,
   UserId,
   sleep,
+  ItemId,
 } from '@little-samo/samo-ai';
-
-/**
- * Item owner information
- */
-interface ItemOwner {
-  ownerAgentId: AgentId | null;
-  ownerUserId: UserId | null;
-}
 import {
   createDeepCopy,
   fileExists,
@@ -26,22 +19,10 @@ import {
 } from '@little-samo/samo-ai-repository-storage/utils';
 
 /**
- * Extended ItemModel interface with required properties
- */
-interface ExtendedItemModel extends ItemModel {
-  id: number;
-  dataId: ItemDataId;
-  owner: ItemOwner;
-  count: number;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-/**
  * Data structure for owner's inventory
  */
 interface OwnerInventory {
-  items: Record<string, ExtendedItemModel>;
+  items: Map<ItemId, ItemModel>;
   statePath: string;
 }
 
@@ -49,7 +30,7 @@ interface OwnerInventory {
  * Database structure for storing items across all owners
  */
 interface ItemDatabase {
-  owners: Record<EntityKey, OwnerInventory>;
+  inventories: Map<EntityKey, OwnerInventory>;
 }
 
 /**
@@ -58,7 +39,7 @@ interface ItemDatabase {
  */
 export class ItemStorage implements ItemRepository {
   private database: ItemDatabase = {
-    owners: {},
+    inventories: new Map(),
   };
 
   private saveInProgress: boolean = false;
@@ -87,16 +68,34 @@ export class ItemStorage implements ItemRepository {
 
     // Find the highest item ID to continue from
     let maxId = 0;
-    for (const ownerData of Object.values(this.database.owners)) {
-      for (const item of Object.values(ownerData.items)) {
-        if (item.id > maxId) {
-          maxId = item.id;
+    for (const ownerData of this.database.inventories.values()) {
+      for (const item of ownerData.items.values()) {
+        const itemId = Number(item.id);
+        if (itemId > maxId) {
+          maxId = itemId;
         }
       }
     }
     this.nextItemId = maxId + 1;
 
     return this;
+  }
+
+  /**
+   * Parse entity key into agentId and userId
+   */
+  private parseEntityKey(entityKey: EntityKey): {
+    agentId: bigint | null;
+    userId: bigint | null;
+  } {
+    const [ownerType, ownerId] = entityKey.split(':');
+    if (ownerType === EntityType.Agent) {
+      return { agentId: BigInt(ownerId), userId: null };
+    } else if (ownerType === EntityType.User) {
+      return { agentId: null, userId: BigInt(ownerId) };
+    } else {
+      throw new Error(`Invalid owner type: ${ownerType}`);
+    }
   }
 
   /**
@@ -108,17 +107,18 @@ export class ItemStorage implements ItemRepository {
       `items_${entityKey.replace(':', '_')}.json`
     );
 
-    this.database.owners[entityKey] = {
-      items: {},
+    this.database.inventories.set(entityKey, {
+      items: new Map(),
       statePath,
-    };
+    });
 
     try {
       if (await fileExists(statePath)) {
         const stateContent = await fs.readFile(statePath, 'utf-8');
         const stateData = JSON.parse(stateContent);
 
-        this.database.owners[entityKey].items = stateData.items || {};
+        this.database.inventories.get(entityKey)!.items =
+          stateData.items || new Map();
       }
     } catch (error) {
       console.warn(
@@ -175,12 +175,12 @@ export class ItemStorage implements ItemRepository {
     try {
       this.saveInProgress = true;
 
-      const ownerData = this.database.owners[entityKey];
+      const ownerData = this.database.inventories.get(entityKey);
       if (!ownerData) {
         throw new Error(`Entity inventory not found: ${entityKey}`);
       }
 
-      const stateData = { items: ownerData.items };
+      const stateData = { items: Object.fromEntries(ownerData.items) };
       const stateJson = JSON.stringify(stateData, null, 2);
       await fs.writeFile(ownerData.statePath, stateJson);
     } finally {
@@ -192,21 +192,8 @@ export class ItemStorage implements ItemRepository {
    * Ensure entity inventory exists in memory
    */
   private async ensureEntityExists(entityKey: EntityKey): Promise<void> {
-    if (!this.database.owners[entityKey]) {
+    if (!this.database.inventories.has(entityKey)) {
       await this.loadOwnerInventory(entityKey);
-    }
-  }
-
-  /**
-   * Get entity key from ItemOwner
-   */
-  private getEntityKey(owner: ItemOwner): EntityKey {
-    if (owner.ownerAgentId !== null) {
-      return `${EntityType.Agent}:${owner.ownerAgentId}` as EntityKey;
-    } else if (owner.ownerUserId !== null) {
-      return `${EntityType.User}:${owner.ownerUserId}` as EntityKey;
-    } else {
-      throw new Error('ItemOwner must have either ownerAgentId or ownerUserId');
     }
   }
 
@@ -224,7 +211,7 @@ export class ItemStorage implements ItemRepository {
       const entityKey = `${EntityType.Agent}:${agentId}` as EntityKey;
       await this.ensureEntityExists(entityKey);
 
-      const ownerData = this.database.owners[entityKey];
+      const ownerData = this.database.inventories.get(entityKey);
       result[entityKey] = ownerData
         ? Object.values(ownerData.items).map((item) =>
             createDeepCopy(item as ItemModel)
@@ -237,7 +224,7 @@ export class ItemStorage implements ItemRepository {
       const entityKey = `${EntityType.User}:${userId}` as EntityKey;
       await this.ensureEntityExists(entityKey);
 
-      const ownerData = this.database.owners[entityKey];
+      const ownerData = this.database.inventories.get(entityKey);
       result[entityKey] = ownerData
         ? Object.values(ownerData.items).map((item) =>
             createDeepCopy(item as ItemModel)
@@ -262,19 +249,21 @@ export class ItemStorage implements ItemRepository {
 
     await this.ensureEntityExists(ownerEntityKey);
 
-    const ownerData = this.database.owners[ownerEntityKey];
-    const itemId = this.nextItemId++;
+    const ownerData = this.database.inventories.get(ownerEntityKey);
+    const itemId = (this.nextItemId++).toString() as ItemId;
 
-    const newItem: ExtendedItemModel = {
+    const { agentId, userId } = this.parseEntityKey(ownerEntityKey);
+    const newItem: ItemModel = {
       id: itemId,
-      dataId,
-      owner: { ownerAgentId: null, ownerUserId: null }, // Placeholder for compatibility
+      itemDataId: dataId,
+      ownerAgentId: agentId,
+      ownerUserId: userId,
       count,
       createdAt: new Date(),
       updatedAt: new Date(),
-    } as ExtendedItemModel;
+    };
 
-    ownerData.items[String(itemId)] = newItem;
+    ownerData!.items.set(itemId, newItem);
     await this.saveState(ownerEntityKey);
 
     return createDeepCopy(newItem as ItemModel);
@@ -287,7 +276,7 @@ export class ItemStorage implements ItemRepository {
     ownerEntityKey: EntityKey,
     dataId: ItemDataId,
     count: number,
-    options?: {
+    _options?: {
       reason?: string;
     }
   ): Promise<ItemModel> {
@@ -297,11 +286,11 @@ export class ItemStorage implements ItemRepository {
 
     await this.ensureEntityExists(ownerEntityKey);
 
-    const ownerData = this.database.owners[ownerEntityKey];
+    const ownerData = this.database.inventories.get(ownerEntityKey)!;
 
     // Check if owner already has this item type
-    for (const item of Object.values(ownerData.items)) {
-      if (item.dataId === dataId) {
+    for (const item of ownerData.items.values()) {
+      if (item.itemDataId === dataId) {
         item.count += count;
         item.updatedAt = new Date();
         await this.saveState(ownerEntityKey);
@@ -320,7 +309,7 @@ export class ItemStorage implements ItemRepository {
     ownerEntityKey: EntityKey,
     item: ItemModel,
     count: number,
-    options?: {
+    _options?: {
       reason?: string;
       force?: boolean;
     }
@@ -331,14 +320,12 @@ export class ItemStorage implements ItemRepository {
 
     await this.ensureEntityExists(ownerEntityKey);
 
-    const extendedItem = item as ExtendedItemModel;
-    const ownerData = this.database.owners[ownerEntityKey];
-    const itemIdStr = String(extendedItem.id);
-    const itemInstance = ownerData.items[itemIdStr];
+    const ownerData = this.database.inventories.get(ownerEntityKey)!;
+    const itemInstance = ownerData.items.get(item.id as ItemId);
 
     if (!itemInstance) {
       throw new Error(
-        `Item with id ${extendedItem.id} not found in ${ownerEntityKey} inventory`
+        `Item with id ${item.id} not found in ${ownerEntityKey} inventory`
       );
     }
 
@@ -353,7 +340,7 @@ export class ItemStorage implements ItemRepository {
 
     // Remove item entirely if count reaches 0
     if (itemInstance.count === 0) {
-      delete ownerData.items[itemIdStr];
+      ownerData.items.delete(item.id as ItemId);
     }
 
     await this.saveState(ownerEntityKey);
@@ -367,7 +354,7 @@ export class ItemStorage implements ItemRepository {
     item: ItemModel,
     targetEntityKey: EntityKey,
     count: number,
-    options?: {
+    _options?: {
       reason?: string;
       force?: boolean;
     }
@@ -379,14 +366,12 @@ export class ItemStorage implements ItemRepository {
     await this.ensureEntityExists(ownerEntityKey);
     await this.ensureEntityExists(targetEntityKey);
 
-    const extendedItem = item as ExtendedItemModel;
-    const ownerData = this.database.owners[ownerEntityKey];
-    const itemIdStr = String(extendedItem.id);
-    const itemInstance = ownerData.items[itemIdStr];
+    const ownerData = this.database.inventories.get(ownerEntityKey)!;
+    const itemInstance = ownerData.items.get(item.id as ItemId);
 
     if (!itemInstance) {
       throw new Error(
-        `Item with id ${extendedItem.id} not found in ${ownerEntityKey} inventory`
+        `Item with id ${item.id} not found in ${ownerEntityKey} inventory`
       );
     }
 
@@ -400,7 +385,11 @@ export class ItemStorage implements ItemRepository {
     await this.removeItemModel(ownerEntityKey, item, count);
 
     // Add to target owner
-    await this.addOrCreateItemModel(targetEntityKey, extendedItem.dataId, count);
+    await this.addOrCreateItemModel(
+      targetEntityKey,
+      item.itemDataId as ItemDataId,
+      count
+    );
   }
 
   /**
@@ -409,7 +398,7 @@ export class ItemStorage implements ItemRepository {
   public async getEntityItems(entityKey: EntityKey): Promise<ItemModel[]> {
     await this.ensureEntityExists(entityKey);
 
-    const ownerData = this.database.owners[entityKey];
+    const ownerData = this.database.inventories.get(entityKey);
     if (!ownerData) {
       return [];
     }
@@ -428,8 +417,8 @@ export class ItemStorage implements ItemRepository {
   ): Promise<boolean> {
     await this.ensureEntityExists(entityKey);
 
-    const ownerData = this.database.owners[entityKey];
-    return ownerData ? String(itemId) in ownerData.items : false;
+    const ownerData = this.database.inventories.get(entityKey);
+    return ownerData ? ownerData.items.has(itemId as ItemId) : false;
   }
 
   /**
@@ -441,14 +430,14 @@ export class ItemStorage implements ItemRepository {
   ): Promise<number> {
     await this.ensureEntityExists(entityKey);
 
-    const ownerData = this.database.owners[entityKey];
+    const ownerData = this.database.inventories.get(entityKey);
     if (!ownerData) {
       return 0;
     }
 
     let totalCount = 0;
-    for (const item of Object.values(ownerData.items)) {
-      if (item.dataId === dataId) {
+    for (const item of ownerData.items.values()) {
+      if (item.itemDataId === dataId) {
         totalCount += item.count;
       }
     }
@@ -460,22 +449,9 @@ export class ItemStorage implements ItemRepository {
    */
   public async findItemById(itemId: number): Promise<ItemModel | null> {
     const itemIdStr = String(itemId);
-    for (const ownerData of Object.values(this.database.owners)) {
+    for (const ownerData of Object.values(this.database.inventories)) {
       if (ownerData.items[itemIdStr]) {
         return createDeepCopy(ownerData.items[itemIdStr] as ItemModel);
-      }
-    }
-    return null;
-  }
-
-  /**
-   * Get owner of a specific item by id
-   */
-  public async getItemOwnerById(itemId: number): Promise<ItemOwner | null> {
-    const itemIdStr = String(itemId);
-    for (const ownerData of Object.values(this.database.owners)) {
-      if (ownerData.items[itemIdStr]) {
-        return createDeepCopy(ownerData.items[itemIdStr].owner);
       }
     }
     return null;

@@ -126,7 +126,9 @@ export class LocationStorage implements LocationRepository {
         locationData.state = stateData.state;
         locationData.messages = stateData.messages || [];
         if (stateData.entityStates) {
-          locationData.entityStates = new Map(Object.entries(stateData.entityStates));
+          locationData.entityStates = new Map(
+            Object.entries(stateData.entityStates)
+          );
         }
       } catch (error) {
         console.warn(
@@ -241,7 +243,7 @@ export class LocationStorage implements LocationRepository {
     if (!locationData) {
       throw new Error(`Location not found: ${locationId}`);
     }
-    
+
     // Return the most recent messages up to the limit
     return locationData.messages.slice(-limit);
   }
@@ -319,7 +321,6 @@ export class LocationStorage implements LocationRepository {
     // Important: Return a deep copy to ensure state is not modified externally
     return createDeepCopy(locationData.state);
   }
-
 
   /**
    * Get or create location entity state (relationship between location and an entity)
@@ -607,13 +608,12 @@ export class LocationStorage implements LocationRepository {
     const messageCopy = createDeepCopy(message);
     locationData.messages.push(messageCopy);
 
-    if (
-      maxMessages &&
-      locationData.messages.length > maxMessages
-    ) {
+    if (maxMessages && locationData.messages.length > maxMessages) {
       const excess = locationData.messages.length - maxMessages;
       locationData.messages.splice(0, excess);
     }
+
+    locationData.state.updatedAt = new Date();
     await this.saveState(locationId);
   }
 

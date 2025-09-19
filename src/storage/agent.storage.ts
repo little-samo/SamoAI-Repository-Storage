@@ -116,11 +116,12 @@ export class AgentStorage implements AgentRepository {
         const agentData = this.database.agents.get(agentId)!;
         agentData.state = stateData.state;
         if (stateData.entityStates) {
-          const entityStatesMap = new Map<EntityId, AgentEntityState>();
-          for (const [key, value] of Object.entries(stateData.entityStates)) {
-            entityStatesMap.set(key as EntityId, value as AgentEntityState);
-          }
-          agentData.entityStates = entityStatesMap;
+          agentData.entityStates = new Map(
+            Object.entries(stateData.entityStates) as [
+              EntityId,
+              AgentEntityState,
+            ][]
+          );
         }
       } catch (error) {
         console.warn(
