@@ -9,7 +9,6 @@ import {
   LocationEntityState,
   LocationId,
   LocationMessage,
-  LocationMessagesState,
   LocationModel,
   LocationRepository,
   LocationState,
@@ -32,15 +31,15 @@ interface LocationData {
   modelPath: string;
   state: LocationState;
   statePath: string;
-  messagesState: LocationMessagesState;
-  entityStates: Record<string, LocationEntityState>;
+  messages: LocationMessage[];
+  entityStates: Map<string, LocationEntityState>;
 }
 
 /**
  * Database structure for storing multiple locations
  */
 interface LocationDatabase {
-  locations: Record<LocationId, LocationData>;
+  locations: Map<LocationId, LocationData>;
 }
 
 /**
@@ -49,7 +48,7 @@ interface LocationDatabase {
  */
 export class LocationStorage implements LocationRepository {
   private database: LocationDatabase = {
-    locations: {},
+    locations: new Map(),
   };
 
   private saveInProgress: boolean = false;
@@ -97,7 +96,7 @@ export class LocationStorage implements LocationRepository {
     const modelJson = JSON.parse(modelContent);
 
     const locationId = Number(modelJson.id) as LocationId;
-    this.database.locations[locationId] = {
+    this.database.locations.set(locationId, {
       model: modelJson,
       modelPath,
       state: {
@@ -106,31 +105,29 @@ export class LocationStorage implements LocationRepository {
         userIds: [],
         canvases: {},
         pauseUpdateUntil: null,
+        pauseUpdateReason: null,
+        pauseUpdateNextAgentId: null,
         images: [],
         rendering: '',
         createdAt: new Date(),
         updatedAt: new Date(),
       },
-      messagesState: {
-        locationId,
-        messages: [],
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      },
+      messages: [],
       statePath,
-      entityStates: {},
-    };
+      entityStates: new Map(),
+    });
 
     if (await fileExists(statePath)) {
       try {
         const stateContent = await fs.readFile(statePath, 'utf-8');
         const stateData = JSON.parse(stateContent);
 
-        this.database.locations[locationId].state = stateData.state;
-        this.database.locations[locationId].messagesState =
-          stateData.messagesState;
-        this.database.locations[locationId].entityStates =
-          stateData.entityStates;
+        const locationData = this.database.locations.get(locationId)!;
+        locationData.state = stateData.state;
+        locationData.messages = stateData.messages || [];
+        if (stateData.entityStates) {
+          locationData.entityStates = new Map(Object.entries(stateData.entityStates));
+        }
       } catch (error) {
         console.warn(
           `Failed to load location state file ${statePath}, using default state:`,
@@ -145,9 +142,7 @@ export class LocationStorage implements LocationRepository {
    * @returns Array of location IDs
    */
   public getLocationIds(): LocationId[] {
-    return Object.keys(this.database.locations).map(
-      (id) => Number(id) as LocationId
-    );
+    return Array.from(this.database.locations.keys());
   }
 
   /**
@@ -199,15 +194,15 @@ export class LocationStorage implements LocationRepository {
     try {
       this.saveInProgress = true;
 
-      const locationData = this.database.locations[locationId];
+      const locationData = this.database.locations.get(locationId);
       if (!locationData) {
         throw new Error(`Location not found: ${locationId}`);
       }
 
       const stateData = {
         state: locationData.state,
-        messagesState: locationData.messagesState,
-        entityStates: locationData.entityStates,
+        messages: locationData.messages,
+        entityStates: Object.fromEntries(locationData.entityStates),
       };
 
       const stateJson = JSON.stringify(stateData, null, 2);
@@ -224,12 +219,31 @@ export class LocationStorage implements LocationRepository {
   public async getLocationModel(
     locationId: LocationId
   ): Promise<LocationModel> {
-    const locationData = this.database.locations[locationId];
+    const locationData = this.database.locations.get(locationId);
     if (!locationData) {
       throw new Error(`Location not found: ${locationId}`);
     }
     // Important: Return a deep copy to prevent external modification
     return createDeepCopy(locationData.model);
+  }
+
+  /**
+   * Get location messages with limit
+   * @param locationId The location ID
+   * @param limit Maximum number of messages to return
+   * @returns Array of location messages
+   */
+  public async getLocationMessages(
+    locationId: LocationId,
+    limit: number
+  ): Promise<LocationMessage[]> {
+    const locationData = this.database.locations.get(locationId);
+    if (!locationData) {
+      throw new Error(`Location not found: ${locationId}`);
+    }
+    
+    // Return the most recent messages up to the limit
+    return locationData.messages.slice(-limit);
   }
 
   /**
@@ -247,7 +261,7 @@ export class LocationStorage implements LocationRepository {
     }
   ): Promise<LocationModel> {
     // Check if location already exists
-    if (this.database.locations[locationId]) {
+    if (this.database.locations.has(locationId)) {
       throw new Error(`Location with ID ${locationId} already exists`);
     }
 
@@ -262,7 +276,7 @@ export class LocationStorage implements LocationRepository {
     const statePath = path.join(this.statesBasePath, `${locationId}.json`);
 
     // Initialize location data in memory
-    this.database.locations[locationId] = {
+    this.database.locations.set(locationId, {
       model: locationModel,
       modelPath,
       state: {
@@ -271,20 +285,17 @@ export class LocationStorage implements LocationRepository {
         userIds: [],
         canvases: {},
         pauseUpdateUntil: null,
+        pauseUpdateReason: null,
+        pauseUpdateNextAgentId: null,
         images: [],
         rendering: '',
         createdAt: new Date(),
         updatedAt: new Date(),
       },
-      messagesState: {
-        locationId,
-        messages: [],
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      },
+      messages: [],
       statePath,
-      entityStates: {},
-    };
+      entityStates: new Map(),
+    });
 
     // Save the model to file
     const modelJson = JSON.stringify(locationModel, null, 2);
@@ -301,26 +312,14 @@ export class LocationStorage implements LocationRepository {
   public async getOrCreateLocationState(
     locationId: LocationId
   ): Promise<LocationState> {
-    if (!this.database.locations[locationId]) {
+    const locationData = this.database.locations.get(locationId);
+    if (!locationData) {
       throw new Error(`Location not found: ${locationId}`);
     }
     // Important: Return a deep copy to ensure state is not modified externally
-    return createDeepCopy(this.database.locations[locationId].state);
+    return createDeepCopy(locationData.state);
   }
 
-  /**
-   * Get or create location messages state
-   * Returns a deep copy to prevent modification of internal state
-   */
-  public async getOrCreateLocationMessagesState(
-    locationId: LocationId
-  ): Promise<LocationMessagesState> {
-    if (!this.database.locations[locationId]) {
-      throw new Error(`Location not found: ${locationId}`);
-    }
-    // Important: Return a deep copy to ensure messages are not modified externally
-    return createDeepCopy(this.database.locations[locationId].messagesState);
-  }
 
   /**
    * Get or create location entity state (relationship between location and an entity)
@@ -331,14 +330,14 @@ export class LocationStorage implements LocationRepository {
     type: EntityType,
     entityId: EntityId
   ): Promise<LocationEntityState> {
-    const locationData = this.database.locations[locationId];
+    const locationData = this.database.locations.get(locationId);
     if (!locationData) {
       throw new Error(`Location not found: ${locationId}`);
     }
 
     const entityKey = `${type}:${entityId}`;
 
-    if (!locationData.entityStates[entityKey]) {
+    if (!locationData.entityStates.has(entityKey)) {
       const newEntityState: LocationEntityState = {
         locationId,
         targetType: type,
@@ -350,11 +349,11 @@ export class LocationStorage implements LocationRepository {
         updatedAt: new Date(),
       };
 
-      locationData.entityStates[entityKey] = newEntityState;
+      locationData.entityStates.set(entityKey, newEntityState);
     }
 
     // Important: Return a deep copy to prevent external modification
-    return createDeepCopy(locationData.entityStates[entityKey]);
+    return createDeepCopy(locationData.entityStates.get(entityKey)!);
   }
 
   /**
@@ -407,7 +406,7 @@ export class LocationStorage implements LocationRepository {
     locationId: LocationId,
     agentId: AgentId
   ): Promise<boolean> {
-    const locationData = this.database.locations[locationId];
+    const locationData = this.database.locations.get(locationId);
     if (!locationData) {
       throw new Error(`Location not found: ${locationId}`);
     }
@@ -430,7 +429,7 @@ export class LocationStorage implements LocationRepository {
     locationId: LocationId,
     agentId: AgentId
   ): Promise<boolean> {
-    const locationData = this.database.locations[locationId];
+    const locationData = this.database.locations.get(locationId);
     if (!locationData) {
       throw new Error(`Location not found: ${locationId}`);
     }
@@ -454,7 +453,7 @@ export class LocationStorage implements LocationRepository {
     locationId: LocationId,
     userId: UserId
   ): Promise<boolean> {
-    const locationData = this.database.locations[locationId];
+    const locationData = this.database.locations.get(locationId);
     if (!locationData) {
       throw new Error(`Location not found: ${locationId}`);
     }
@@ -477,7 +476,7 @@ export class LocationStorage implements LocationRepository {
     locationId: LocationId,
     userId: UserId
   ): Promise<boolean> {
-    const locationData = this.database.locations[locationId];
+    const locationData = this.database.locations.get(locationId);
     if (!locationData) {
       throw new Error(`Location not found: ${locationId}`);
     }
@@ -501,7 +500,7 @@ export class LocationStorage implements LocationRepository {
     locationId: LocationId,
     pauseUpdateUntil: Date | null
   ): Promise<void> {
-    const locationData = this.database.locations[locationId];
+    const locationData = this.database.locations.get(locationId);
     if (!locationData) {
       throw new Error(`Location not found: ${locationId}`);
     }
@@ -522,7 +521,7 @@ export class LocationStorage implements LocationRepository {
     modifierEntityId: EntityId,
     text: string
   ): Promise<void> {
-    const locationData = this.database.locations[locationId];
+    const locationData = this.database.locations.get(locationId);
     if (!locationData) {
       throw new Error(`Location not found: ${locationId}`);
     }
@@ -552,7 +551,7 @@ export class LocationStorage implements LocationRepository {
     index: number,
     image: string
   ): Promise<void> {
-    const locationData = this.database.locations[locationId];
+    const locationData = this.database.locations.get(locationId);
     if (!locationData) {
       throw new Error(`Location not found: ${locationId}`);
     }
@@ -580,7 +579,7 @@ export class LocationStorage implements LocationRepository {
     locationId: LocationId,
     rendering: string | null
   ): Promise<void> {
-    const locationData = this.database.locations[locationId];
+    const locationData = this.database.locations.get(locationId);
     if (!locationData) {
       throw new Error(`Location not found: ${locationId}`);
     }
@@ -599,24 +598,22 @@ export class LocationStorage implements LocationRepository {
     message: LocationMessage,
     maxMessages?: number
   ): Promise<void> {
-    const locationData = this.database.locations[locationId];
+    const locationData = this.database.locations.get(locationId);
     if (!locationData) {
       throw new Error(`Location not found: ${locationId}`);
     }
 
     // Important: Create deep copy to ensure message doesn't reference external data
     const messageCopy = createDeepCopy(message);
-    locationData.messagesState.messages.push(messageCopy);
+    locationData.messages.push(messageCopy);
 
     if (
       maxMessages &&
-      locationData.messagesState.messages.length > maxMessages
+      locationData.messages.length > maxMessages
     ) {
-      const excess = locationData.messagesState.messages.length - maxMessages;
-      locationData.messagesState.messages.splice(0, excess);
+      const excess = locationData.messages.length - maxMessages;
+      locationData.messages.splice(0, excess);
     }
-
-    locationData.messagesState.updatedAt = new Date();
     await this.saveState(locationId);
   }
 
@@ -632,13 +629,14 @@ export class LocationStorage implements LocationRepository {
     await this.getOrCreateLocationEntityState(locationId, targetType, targetId);
 
     const entityKey = `${targetType}:${targetId}`;
-    const locationData = this.database.locations[locationId];
+    const locationData = this.database.locations.get(locationId);
     if (!locationData) {
       throw new Error(`Location not found: ${locationId}`);
     }
 
-    locationData.entityStates[entityKey].isActive = isActive;
-    locationData.entityStates[entityKey].updatedAt = new Date();
+    const entityState = locationData.entityStates.get(entityKey)!;
+    entityState.isActive = isActive;
+    entityState.updatedAt = new Date();
     await this.saveState(locationId);
   }
 
@@ -653,15 +651,16 @@ export class LocationStorage implements LocationRepository {
     expression: string
   ): Promise<void> {
     const entityKey = `${targetType}:${targetId}`;
-    const locationData = this.database.locations[locationId];
+    const locationData = this.database.locations.get(locationId);
     if (!locationData) {
       throw new Error(`Location not found: ${locationId}`);
     }
 
     await this.getOrCreateLocationEntityState(locationId, targetType, targetId);
 
-    locationData.entityStates[entityKey].expression = expression;
-    locationData.entityStates[entityKey].updatedAt = new Date();
+    const entityState = locationData.entityStates.get(entityKey)!;
+    entityState.expression = expression;
+    entityState.updatedAt = new Date();
     await this.saveState(locationId);
   }
 
@@ -677,24 +676,25 @@ export class LocationStorage implements LocationRepository {
     text: string
   ): Promise<void> {
     const entityKey = `${targetType}:${targetId}`;
-    const locationData = this.database.locations[locationId];
+    const locationData = this.database.locations.get(locationId);
     if (!locationData) {
       throw new Error(`Location not found: ${locationId}`);
     }
 
     await this.getOrCreateLocationEntityState(locationId, targetType, targetId);
 
-    if (!locationData.entityStates[entityKey].canvases) {
-      locationData.entityStates[entityKey].canvases = {};
+    const entityState = locationData.entityStates.get(entityKey)!;
+    if (!entityState.canvases) {
+      entityState.canvases = {};
     }
 
-    locationData.entityStates[entityKey].canvases[canvasName] = {
+    entityState.canvases[canvasName] = {
       text,
       createdAt: new Date(),
       updatedAt: new Date(),
     };
 
-    locationData.entityStates[entityKey].updatedAt = new Date();
+    entityState.updatedAt = new Date();
     await this.saveState(locationId);
   }
 }

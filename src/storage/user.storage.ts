@@ -30,7 +30,7 @@ interface UserData {
  * Database structure for storing multiple users
  */
 interface UserDatabase {
-  users: Record<UserId, UserData>;
+  users: Map<UserId, UserData>;
 }
 
 /**
@@ -39,7 +39,7 @@ interface UserDatabase {
  */
 export class UserStorage implements UserRepository {
   private database: UserDatabase = {
-    users: {},
+    users: new Map(),
   };
 
   private saveInProgress: boolean = false;
@@ -88,7 +88,7 @@ export class UserStorage implements UserRepository {
     const modelJson = JSON.parse(modelContent);
 
     const userId = Number(modelJson.id) as UserId;
-    this.database.users[userId] = {
+    this.database.users.set(userId, {
       model: modelJson,
       modelPath,
       state: {
@@ -97,14 +97,14 @@ export class UserStorage implements UserRepository {
         createdAt: new Date(),
       },
       statePath,
-    };
+    });
 
     if (await fileExists(statePath)) {
       try {
         const stateContent = await fs.readFile(statePath, 'utf-8');
         const stateData = JSON.parse(stateContent);
 
-        this.database.users[userId].state = stateData.state || {
+        this.database.users.get(userId)!.state = stateData.state || {
           userId: userId,
         };
       } catch (error) {
@@ -121,7 +121,7 @@ export class UserStorage implements UserRepository {
    * @returns Array of user IDs
    */
   public getUserIds(): UserId[] {
-    return Object.keys(this.database.users).map((id) => Number(id) as UserId);
+    return Array.from(this.database.users.keys());
   }
 
   /**
@@ -172,7 +172,7 @@ export class UserStorage implements UserRepository {
     try {
       this.saveInProgress = true;
 
-      const userData = this.database.users[userId];
+      const userData = this.database.users.get(userId);
       if (!userData) {
         throw new Error(`User not found: ${userId}`);
       }
@@ -193,7 +193,7 @@ export class UserStorage implements UserRepository {
    * Returns a deep copy to prevent modification of internal state
    */
   public async getUserModel(userId: UserId): Promise<UserModel> {
-    const userData = this.database.users[userId];
+    const userData = this.database.users.get(userId);
     if (!userData) {
       throw new Error(`User not found: ${userId}`);
     }
@@ -208,10 +208,11 @@ export class UserStorage implements UserRepository {
    */
   public async getUserModels(
     userIds: UserId[]
-  ): Promise<Record<UserId, UserModel>> {
-    const result: Record<UserId, UserModel> = {};
+  ): Promise<Map<UserId, UserModel>> {
+    const result = new Map<UserId, UserModel>();
     for (const userId of userIds) {
-      result[userId] = await this.getUserModel(userId);
+      const model = await this.getUserModel(userId);
+      result.set(userId, model);
     }
     return result;
   }
@@ -233,7 +234,7 @@ export class UserStorage implements UserRepository {
     }
   ): Promise<UserModel> {
     // Check if user already exists
-    if (this.database.users[userId]) {
+    if (this.database.users.has(userId)) {
       throw new Error(`User with ID ${userId} already exists`);
     }
 
@@ -251,7 +252,7 @@ export class UserStorage implements UserRepository {
     const statePath = path.join(this.statesBasePath, `${userId}.json`);
 
     // Initialize user data in memory
-    this.database.users[userId] = {
+    this.database.users.set(userId, {
       model: userModel,
       modelPath,
       state: {
@@ -260,7 +261,7 @@ export class UserStorage implements UserRepository {
         createdAt: new Date(),
       },
       statePath,
-    };
+    });
 
     // Save the model to file
     const modelJson = JSON.stringify(userModel, null, 2);
@@ -277,29 +278,39 @@ export class UserStorage implements UserRepository {
   public async getUserLlmApiKeys(_userId: UserId): Promise<LlmApiKeyModel[]> {
     // Uses shared API keys from .env regardless of user ID
     // A real implementation would store and retrieve user-specific API keys
-    return [
-      {
+    const apiKeys: LlmApiKeyModel[] = [];
+    
+    if (process.env.OPENAI_API_KEY) {
+      apiKeys.push({
         id: 1,
         platform: LlmPlatform.OPENAI,
-        key: process.env.OPENAI_API_KEY!,
+        key: process.env.OPENAI_API_KEY,
         createdAt: new Date(),
         updatedAt: new Date(),
-      },
-      {
+      });
+    }
+    
+    if (process.env.GEMINI_API_KEY) {
+      apiKeys.push({
         id: 2,
         platform: LlmPlatform.GEMINI,
-        key: process.env.GEMINI_API_KEY!,
+        key: process.env.GEMINI_API_KEY,
         createdAt: new Date(),
         updatedAt: new Date(),
-      },
-      {
+      });
+    }
+    
+    if (process.env.ANTHROPIC_API_KEY) {
+      apiKeys.push({
         id: 3,
         platform: LlmPlatform.ANTHROPIC,
-        key: process.env.ANTHROPIC_API_KEY!,
+        key: process.env.ANTHROPIC_API_KEY,
         createdAt: new Date(),
         updatedAt: new Date(),
-      },
-    ];
+      });
+    }
+    
+    return apiKeys;
   }
 
   /**
@@ -307,11 +318,12 @@ export class UserStorage implements UserRepository {
    * Returns a deep copy to prevent modification of internal state
    */
   public async getOrCreateUserState(userId: UserId): Promise<UserState> {
-    if (!this.database.users[userId]) {
+    const userData = this.database.users.get(userId);
+    if (!userData) {
       throw new Error(`User not found: ${userId}`);
     }
     // Important: Return a deep copy to ensure state is not modified externally
-    return createDeepCopy(this.database.users[userId].state);
+    return createDeepCopy(userData.state);
   }
 
   /**
@@ -320,10 +332,11 @@ export class UserStorage implements UserRepository {
    */
   public async getOrCreateUserStates(
     userIds: UserId[]
-  ): Promise<Record<UserId, UserState>> {
-    const result: Record<UserId, UserState> = {};
+  ): Promise<Map<UserId, UserState>> {
+    const result = new Map<UserId, UserState>();
     for (const userId of userIds) {
-      result[userId] = await this.getOrCreateUserState(userId);
+      const state = await this.getOrCreateUserState(userId);
+      result.set(userId, state);
     }
     return result;
   }

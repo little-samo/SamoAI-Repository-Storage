@@ -29,14 +29,14 @@ interface AgentData {
   modelPath: string;
   state: AgentState;
   statePath: string;
-  entityStates: Record<EntityId, AgentEntityState>;
+  entityStates: Map<EntityId, AgentEntityState>;
 }
 
 /**
  * Database structure for storing multiple agents
  */
 interface AgentDatabase {
-  agents: Record<AgentId, AgentData>;
+  agents: Map<AgentId, AgentData>;
 }
 
 /**
@@ -45,7 +45,7 @@ interface AgentDatabase {
  */
 export class AgentStorage implements AgentRepository {
   private database: AgentDatabase = {
-    agents: {},
+    agents: new Map(),
   };
 
   private saveInProgress: boolean = false;
@@ -94,7 +94,7 @@ export class AgentStorage implements AgentRepository {
     const modelJson = JSON.parse(modelContent);
 
     const agentId = Number(modelJson.id) as AgentId;
-    this.database.agents[agentId] = {
+    this.database.agents.set(agentId, {
       model: modelJson,
       modelPath,
       state: {
@@ -105,16 +105,23 @@ export class AgentStorage implements AgentRepository {
         updatedAt: new Date(),
       },
       statePath,
-      entityStates: {},
-    };
+      entityStates: new Map(),
+    });
 
     if (await fileExists(statePath)) {
       try {
         const stateContent = await fs.readFile(statePath, 'utf-8');
         const stateData = JSON.parse(stateContent);
 
-        this.database.agents[agentId].state = stateData.state;
-        this.database.agents[agentId].entityStates = stateData.entityStates;
+        const agentData = this.database.agents.get(agentId)!;
+        agentData.state = stateData.state;
+        if (stateData.entityStates) {
+          const entityStatesMap = new Map<EntityId, AgentEntityState>();
+          for (const [key, value] of Object.entries(stateData.entityStates)) {
+            entityStatesMap.set(key as EntityId, value as AgentEntityState);
+          }
+          agentData.entityStates = entityStatesMap;
+        }
       } catch (error) {
         console.warn(
           `Failed to load state file ${statePath}, using default state:`,
@@ -129,7 +136,7 @@ export class AgentStorage implements AgentRepository {
    * @returns Array of agent IDs
    */
   public getAgentIds(): AgentId[] {
-    return Object.keys(this.database.agents).map((id) => Number(id) as AgentId);
+    return Array.from(this.database.agents.keys());
   }
 
   /**
@@ -180,14 +187,14 @@ export class AgentStorage implements AgentRepository {
     try {
       this.saveInProgress = true;
 
-      const agentData = this.database.agents[agentId];
+      const agentData = this.database.agents.get(agentId);
       if (!agentData) {
         throw new Error(`Agent not found: ${agentId}`);
       }
 
       const stateData = {
         state: agentData.state,
-        entityStates: agentData.entityStates,
+        entityStates: Object.fromEntries(agentData.entityStates),
       };
 
       const stateJson = JSON.stringify(stateData, null, 2);
@@ -202,15 +209,13 @@ export class AgentStorage implements AgentRepository {
    * Returns a deep copy to prevent modification of internal state
    */
   public async getAgentModel(agentId: AgentId): Promise<AgentModel> {
-    const agentData = this.database.agents[agentId];
+    const agentData = this.database.agents.get(agentId);
     if (!agentData) {
       throw new Error(`Agent not found: ${agentId}`);
     }
 
     // Important: Return a deep copy to prevent external modification of stored data
-    const modelCopy = createDeepCopy(agentData.model);
-    modelCopy.isActive = true;
-    return modelCopy;
+    return createDeepCopy(agentData.model);
   }
 
   /**
@@ -219,10 +224,11 @@ export class AgentStorage implements AgentRepository {
    */
   public async getAgentModels(
     agentIds: AgentId[]
-  ): Promise<Record<AgentId, AgentModel>> {
-    const result: Record<AgentId, AgentModel> = {};
+  ): Promise<Map<AgentId, AgentModel>> {
+    const result = new Map<AgentId, AgentModel>();
     for (const agentId of agentIds) {
-      result[agentId] = await this.getAgentModel(agentId);
+      const model = await this.getAgentModel(agentId);
+      result.set(agentId, model);
     }
     return result;
   }
@@ -244,7 +250,7 @@ export class AgentStorage implements AgentRepository {
     }
   ): Promise<AgentModel> {
     // Check if agent already exists
-    if (this.database.agents[agentId]) {
+    if (this.database.agents.has(agentId)) {
       throw new Error(`Agent with ID ${agentId} already exists`);
     }
 
@@ -253,7 +259,6 @@ export class AgentStorage implements AgentRepository {
       name,
       username: options?.username ?? null,
       meta: options?.meta ?? createDeepCopy(DEFAULT_AGENT_META),
-      isActive: options?.isActive ?? true,
     };
 
     // Create the model file path
@@ -261,7 +266,7 @@ export class AgentStorage implements AgentRepository {
     const statePath = path.join(this.statesBasePath, `${agentId}.json`);
 
     // Initialize agent data in memory
-    this.database.agents[agentId] = {
+    this.database.agents.set(agentId, {
       model: agentModel,
       modelPath,
       state: {
@@ -272,8 +277,8 @@ export class AgentStorage implements AgentRepository {
         updatedAt: new Date(),
       },
       statePath,
-      entityStates: {},
-    };
+      entityStates: new Map(),
+    });
 
     // Save the model to file
     const modelJson = JSON.stringify(agentModel, null, 2);
@@ -288,11 +293,12 @@ export class AgentStorage implements AgentRepository {
    * Returns a deep copy to prevent modification of internal state
    */
   public async getOrCreateAgentState(agentId: AgentId): Promise<AgentState> {
-    if (!this.database.agents[agentId]) {
+    const agentData = this.database.agents.get(agentId);
+    if (!agentData) {
       throw new Error(`Agent not found: ${agentId}`);
     }
     // Important: Return a deep copy to ensure state is not modified externally
-    return createDeepCopy(this.database.agents[agentId].state);
+    return createDeepCopy(agentData.state);
   }
 
   /**
@@ -301,10 +307,11 @@ export class AgentStorage implements AgentRepository {
    */
   public async getOrCreateAgentStates(
     agentIds: AgentId[]
-  ): Promise<Record<AgentId, AgentState>> {
-    const result: Record<AgentId, AgentState> = {};
+  ): Promise<Map<AgentId, AgentState>> {
+    const result = new Map<AgentId, AgentState>();
     for (const agentId of agentIds) {
-      result[agentId] = await this.getOrCreateAgentState(agentId);
+      const state = await this.getOrCreateAgentState(agentId);
+      result.set(agentId, state);
     }
     return result;
   }
@@ -318,14 +325,14 @@ export class AgentStorage implements AgentRepository {
     type: EntityType,
     id: EntityId
   ): Promise<AgentEntityState> {
-    const agentData = this.database.agents[agentId];
+    const agentData = this.database.agents.get(agentId);
     if (!agentData) {
       throw new Error(`Agent not found: ${agentId}`);
     }
 
     const entityKey = `${type}:${id}` as unknown as EntityId;
 
-    if (!agentData.entityStates[entityKey]) {
+    if (!agentData.entityStates.has(entityKey)) {
       const newEntityState: AgentEntityState = {
         agentId: agentId,
         targetType: type,
@@ -335,11 +342,11 @@ export class AgentStorage implements AgentRepository {
         updatedAt: new Date(),
       };
 
-      agentData.entityStates[entityKey] = newEntityState;
+      agentData.entityStates.set(entityKey, newEntityState);
     }
 
     // Important: Return a deep copy to prevent external modification
-    return createDeepCopy(agentData.entityStates[entityKey]);
+    return createDeepCopy(agentData.entityStates.get(entityKey)!);
   }
 
   /**
@@ -350,11 +357,11 @@ export class AgentStorage implements AgentRepository {
     agentIds: AgentId[],
     targetAgentIds: AgentId[],
     targetUserIds: UserId[]
-  ): Promise<Record<AgentId, AgentEntityState[]>> {
-    const result: Record<AgentId, AgentEntityState[]> = {};
+  ): Promise<Map<AgentId, AgentEntityState[]>> {
+    const result = new Map<AgentId, AgentEntityState[]>();
 
     for (const agentId of agentIds) {
-      result[agentId] = [];
+      const entityStates: AgentEntityState[] = [];
 
       for (const targetAgentId of targetAgentIds) {
         const entityState = await this.getOrCreateAgentEntityState(
@@ -362,7 +369,7 @@ export class AgentStorage implements AgentRepository {
           EntityType.Agent,
           targetAgentId
         );
-        result[agentId].push(entityState);
+        entityStates.push(entityState);
       }
 
       for (const targetUserId of targetUserIds) {
@@ -371,8 +378,10 @@ export class AgentStorage implements AgentRepository {
           EntityType.User,
           targetUserId
         );
-        result[agentId].push(entityState);
+        entityStates.push(entityState);
       }
+
+      result.set(agentId, entityStates);
     }
 
     return result;
@@ -388,7 +397,7 @@ export class AgentStorage implements AgentRepository {
     memory: string,
     createdAt?: Date
   ): Promise<void> {
-    const agentData = this.database.agents[agentId];
+    const agentData = this.database.agents.get(agentId);
     if (!agentData) {
       throw new Error(`Agent not found: ${agentId}`);
     }
@@ -428,7 +437,7 @@ export class AgentStorage implements AgentRepository {
   ): Promise<void> {
     // Get entity state key
     const entityKey = `${targetType}:${targetId}` as unknown as EntityId;
-    const agentData = this.database.agents[agentId];
+    const agentData = this.database.agents.get(agentId);
     if (!agentData) {
       throw new Error(`Agent not found: ${agentId}`);
     }
@@ -436,7 +445,7 @@ export class AgentStorage implements AgentRepository {
     // Ensure entity state exists
     await this.getOrCreateAgentEntityState(agentId, targetType, targetId);
 
-    const entityState = agentData.entityStates[entityKey];
+    const entityState = agentData.entityStates.get(entityKey)!;
     const timestamp = createdAt || new Date();
 
     const memoryObj = {
@@ -462,7 +471,7 @@ export class AgentStorage implements AgentRepository {
     agentId: AgentId,
     summary: string
   ): Promise<void> {
-    const agentData = this.database.agents[agentId];
+    const agentData = this.database.agents.get(agentId);
     if (!agentData) {
       throw new Error(`Agent not found: ${agentId}`);
     }
