@@ -16,6 +16,7 @@ import {
   LocationMeta,
   DEFAULT_LOCATION_META,
   sleep,
+  LocationMission,
 } from '@little-samo/samo-ai';
 import {
   createDeepCopy,
@@ -109,6 +110,7 @@ export class LocationStorage implements LocationRepository {
         pauseUpdateNextAgentId: null,
         images: [],
         rendering: '',
+        mission: null,
         remainingAgentExecutions: null,
         createdAt: new Date(),
         updatedAt: new Date(),
@@ -292,6 +294,7 @@ export class LocationStorage implements LocationRepository {
         pauseUpdateNextAgentId: null,
         images: [],
         rendering: '',
+        mission: null,
         remainingAgentExecutions: null,
         createdAt: new Date(),
         updatedAt: new Date(),
@@ -570,6 +573,66 @@ export class LocationStorage implements LocationRepository {
     }
 
     locationData.state.images[index] = image;
+    locationData.state.updatedAt = new Date();
+    await this.saveState(locationId);
+  }
+
+  /**
+   * Update the location's mission
+   * Mission represents the current objectives and goals for the location
+   */
+  public async updateLocationStateMission(
+    locationId: LocationId,
+    mission: LocationMission | null
+  ): Promise<void> {
+    const locationData = this.database.locations.get(locationId);
+    if (!locationData) {
+      throw new Error(`Location not found: ${locationId}`);
+    }
+
+    locationData.state.mission = mission;
+    locationData.state.updatedAt = new Date();
+    await this.saveState(locationId);
+  }
+
+  /**
+   * Update a specific objective within the location's mission
+   * Updates completion status and timestamp for a mission objective
+   */
+  public async updateLocationStateMissionObjective(
+    locationId: LocationId,
+    objectiveIndex: number,
+    completed: boolean,
+    completedAt?: Date
+  ): Promise<void> {
+    const locationData = this.database.locations.get(locationId);
+    if (!locationData) {
+      throw new Error(`Location not found: ${locationId}`);
+    }
+
+    if (!locationData.state.mission) {
+      throw new Error(`Location ${locationId} has no active mission`);
+    }
+
+    if (!locationData.state.mission.objectives) {
+      throw new Error(`Mission has no objectives array`);
+    }
+
+    if (
+      objectiveIndex < 0 ||
+      objectiveIndex >= locationData.state.mission.objectives.length
+    ) {
+      throw new Error(
+        `Objective index ${objectiveIndex} is out of bounds (0-${locationData.state.mission.objectives.length - 1})`
+      );
+    }
+
+    locationData.state.mission.objectives[objectiveIndex].completed = completed;
+    if (completedAt !== undefined) {
+      locationData.state.mission.objectives[objectiveIndex].completedAt =
+        completedAt;
+    }
+
     locationData.state.updatedAt = new Date();
     await this.saveState(locationId);
   }
