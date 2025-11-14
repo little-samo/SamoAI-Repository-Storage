@@ -109,6 +109,7 @@ export class LocationStorage implements LocationRepository {
         pauseUpdateNextAgentId: null,
         images: [],
         rendering: '',
+        remainingAgentExecutions: null,
         createdAt: new Date(),
         updatedAt: new Date(),
       },
@@ -291,6 +292,7 @@ export class LocationStorage implements LocationRepository {
         pauseUpdateNextAgentId: null,
         images: [],
         rendering: '',
+        remainingAgentExecutions: null,
         createdAt: new Date(),
         updatedAt: new Date(),
       },
@@ -586,6 +588,37 @@ export class LocationStorage implements LocationRepository {
     }
 
     locationData.state.rendering = rendering;
+    locationData.state.updatedAt = new Date();
+    await this.saveState(locationId);
+  }
+
+  /**
+   * Update remaining agent executions for a location
+   */
+  public async updateLocationStateRemainingAgentExecutions(
+    locationId: LocationId,
+    value: {
+      remainingAgentExecutions: number | null;
+      remainingAgentExecutionsDelta: number | null;
+    }
+  ): Promise<void> {
+    const locationData = this.database.locations.get(locationId);
+    if (!locationData) {
+      throw new Error(`Location not found: ${locationId}`);
+    }
+
+    if (value.remainingAgentExecutions !== undefined) {
+      locationData.state.remainingAgentExecutions =
+        value.remainingAgentExecutions;
+    } else if (
+      value.remainingAgentExecutionsDelta !== undefined &&
+      value.remainingAgentExecutionsDelta !== null
+    ) {
+      const current = locationData.state.remainingAgentExecutions ?? 0;
+      locationData.state.remainingAgentExecutions =
+        current + value.remainingAgentExecutionsDelta;
+    }
+
     locationData.state.updatedAt = new Date();
     await this.saveState(locationId);
   }
