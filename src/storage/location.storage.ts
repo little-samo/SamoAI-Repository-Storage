@@ -660,26 +660,28 @@ export class LocationStorage implements LocationRepository {
    */
   public async updateLocationStateRemainingAgentExecutions(
     locationId: LocationId,
-    value: {
-      remainingAgentExecutions: number | null;
-      remainingAgentExecutionsDelta: number | null;
-    }
+    value:
+      | {
+          remainingAgentExecutions: number | null;
+        }
+      | {
+          remainingAgentExecutionsDelta: number;
+        }
   ): Promise<void> {
     const locationData = this.database.locations.get(locationId);
     if (!locationData) {
       throw new Error(`Location not found: ${locationId}`);
     }
 
-    if (value.remainingAgentExecutions !== undefined) {
+    if ('remainingAgentExecutions' in value) {
       locationData.state.remainingAgentExecutions =
         value.remainingAgentExecutions;
-    } else if (
-      value.remainingAgentExecutionsDelta !== undefined &&
-      value.remainingAgentExecutionsDelta !== null
-    ) {
-      const current = locationData.state.remainingAgentExecutions ?? 0;
-      locationData.state.remainingAgentExecutions =
-        current + value.remainingAgentExecutionsDelta;
+    } else if ('remainingAgentExecutionsDelta' in value) {
+      const current = locationData.state.remainingAgentExecutions;
+      if (current !== null) {
+        locationData.state.remainingAgentExecutions =
+          current + value.remainingAgentExecutionsDelta;
+      }
     }
 
     locationData.state.updatedAt = new Date();
