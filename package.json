@@ -1,6 +1,6 @@
 {
   "name": "@little-samo/samo-ai-repository-storage",
-  "version": "0.6.1",
+  "version": "0.7.1",
   "description": "File system-based repository implementations for SamoAI",
   "license": "MIT",
   "repository": {
@@ -31,9 +31,15 @@
   },
   "typesVersions": {
     "*": {
-      "*": ["dist/index.d.ts"],
-      "storage": ["dist/storage/index.d.ts"],
-      "utils": ["dist/utils/index.d.ts"]
+      "*": [
+        "dist/index.d.ts"
+      ],
+      "storage": [
+        "dist/storage/index.d.ts"
+      ],
+      "utils": [
+        "dist/utils/index.d.ts"
+      ]
     }
   },
   "files": [
@@ -67,6 +73,6 @@
     "typescript": "^5.7.2"
   },
   "peerDependencies": {
-    "@little-samo/samo-ai": "^0.6.1"
+    "@little-samo/samo-ai": "^0.7.1"
   }
 }
