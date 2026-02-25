@@ -185,6 +185,7 @@ export class AgentStorage implements AgentRepository {
       };
 
       const stateJson = JSON.stringify(stateData, null, 2);
+      await ensureDirectoryExists(this.statesBasePath);
       await fs.writeFile(agentData.statePath, stateJson);
     });
 
@@ -270,6 +271,7 @@ export class AgentStorage implements AgentRepository {
 
     // Save the model to file
     const modelJson = JSON.stringify(agentModel, null, 2);
+    await ensureDirectoryExists(this.modelsBasePath);
     await fs.writeFile(modelPath, modelJson);
 
     // Return a deep copy to prevent external modification

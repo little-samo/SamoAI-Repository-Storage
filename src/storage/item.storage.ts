@@ -169,6 +169,7 @@ export class ItemStorage implements ItemRepository {
 
       const stateData = { items: Object.fromEntries(ownerData.items) };
       const stateJson = JSON.stringify(stateData, null, 2);
+      await ensureDirectoryExists(this.statesBasePath);
       await fs.writeFile(ownerData.statePath, stateJson);
     });
 

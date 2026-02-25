@@ -143,6 +143,7 @@ export class GimmickStorage implements GimmickRepository {
       };
 
       const stateJson = JSON.stringify(stateData, null, 2);
+      await ensureDirectoryExists(this.statesBasePath);
       await fs.writeFile(locationData.statePath, stateJson);
     });
 
