@@ -9,7 +9,6 @@ import {
   EntityType,
   AgentId,
   UserId,
-  sleep,
   ItemId,
 } from '@little-samo/samo-ai';
 import {
@@ -42,7 +41,7 @@ export class ItemStorage implements ItemRepository {
     inventories: new Map(),
   };
 
-  private saveInProgress: boolean = false;
+  private savePromise: Promise<void> = Promise.resolve();
   private saveQueue: Map<
     EntityKey,
     { timeoutId: NodeJS.Timeout; resolve: () => void }
@@ -140,16 +139,15 @@ export class ItemStorage implements ItemRepository {
 
     return new Promise<void>((resolve) => {
       const timeoutId = setTimeout(async () => {
+        this.saveQueue.delete(entityKey);
         try {
           await this.executeSave(entityKey);
-          this.saveQueue.delete(entityKey);
-          resolve();
         } catch (error) {
           console.error(
             `Error saving item states for entity ${entityKey}:`,
             error
           );
-          this.saveQueue.delete(entityKey);
+        } finally {
           resolve();
         }
       }, this.saveQueueDelay);
@@ -160,21 +158,10 @@ export class ItemStorage implements ItemRepository {
 
   /**
    * Execute the actual save operation to filesystem
+   * Uses a promise chain to prevent concurrent writes
    */
   private async executeSave(entityKey: EntityKey): Promise<void> {
-    const waitForLock = async (): Promise<void> => {
-      if (this.saveInProgress) {
-        await sleep(10);
-        return waitForLock();
-      }
-      return;
-    };
-
-    await waitForLock();
-
-    try {
-      this.saveInProgress = true;
-
+    const saveOperation = this.savePromise.then(async () => {
       const ownerData = this.database.inventories.get(entityKey);
       if (!ownerData) {
         throw new Error(`Entity inventory not found: ${entityKey}`);
@@ -183,9 +170,10 @@ export class ItemStorage implements ItemRepository {
       const stateData = { items: Object.fromEntries(ownerData.items) };
       const stateJson = JSON.stringify(stateData, null, 2);
       await fs.writeFile(ownerData.statePath, stateJson);
-    } finally {
-      this.saveInProgress = false;
-    }
+    });
+
+    this.savePromise = saveOperation.catch(() => {});
+    await saveOperation;
   }
 
   /**

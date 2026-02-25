@@ -13,7 +13,6 @@ import {
   AgentMemory,
   AgentMeta,
   DEFAULT_AGENT_META,
-  sleep,
 } from '@little-samo/samo-ai';
 import {
   createDeepCopy,
@@ -48,7 +47,7 @@ export class AgentStorage implements AgentRepository {
     agents: new Map(),
   };
 
-  private saveInProgress: boolean = false;
+  private savePromise: Promise<void> = Promise.resolve();
   private saveQueue: Map<
     AgentId,
     { timeoutId: NodeJS.Timeout; resolve: () => void }
@@ -154,13 +153,12 @@ export class AgentStorage implements AgentRepository {
 
     return new Promise<void>((resolve) => {
       const timeoutId = setTimeout(async () => {
+        this.saveQueue.delete(agentId);
         try {
           await this.executeSave(agentId);
-          this.saveQueue.delete(agentId);
-          resolve();
         } catch (error) {
           console.error(`Error saving state for agent ${agentId}:`, error);
-          this.saveQueue.delete(agentId);
+        } finally {
           resolve();
         }
       }, this.saveQueueDelay);
@@ -172,22 +170,10 @@ export class AgentStorage implements AgentRepository {
 
   /**
    * Execute the actual save operation to filesystem
-   * Uses a lock to prevent concurrent writes
+   * Uses a promise chain to prevent concurrent writes
    */
   private async executeSave(agentId: AgentId): Promise<void> {
-    const waitForLock = async (): Promise<void> => {
-      if (this.saveInProgress) {
-        await sleep(10);
-        return waitForLock();
-      }
-      return;
-    };
-
-    await waitForLock();
-
-    try {
-      this.saveInProgress = true;
-
+    const saveOperation = this.savePromise.then(async () => {
       const agentData = this.database.agents.get(agentId);
       if (!agentData) {
         throw new Error(`Agent not found: ${agentId}`);
@@ -200,9 +186,10 @@ export class AgentStorage implements AgentRepository {
 
       const stateJson = JSON.stringify(stateData, null, 2);
       await fs.writeFile(agentData.statePath, stateJson);
-    } finally {
-      this.saveInProgress = false;
-    }
+    });
+
+    this.savePromise = saveOperation.catch(() => {});
+    await saveOperation;
   }
 
   /**

@@ -44,20 +44,17 @@ import {
   UserStorage,
   LocationStorage,
   ItemStorage,
-  GimmickStorage
+  GimmickStorage,
 } from '@little-samo/samo-ai-repository-storage';
 import { WorldManager } from '@little-samo/samo-ai';
 
 // Initialize storage instances
 const agentStorage = new AgentStorage(
-  './models/agents',    // Path to agent model files
-  './states/agents'     // Path to agent state files
+  './models/agents', // Path to agent model files
+  './states/agents' // Path to agent state files
 );
 
-const userStorage = new UserStorage(
-  './models/users',
-  './states/users'
-);
+const userStorage = new UserStorage('./models/users', './states/users');
 
 const locationStorage = new LocationStorage(
   './models/locations',
@@ -65,11 +62,11 @@ const locationStorage = new LocationStorage(
 );
 
 const itemStorage = new ItemStorage(
-  './states/items'      // Only state path needed for items
+  './states/items' // Only state path needed for items
 );
 
 const gimmickStorage = new GimmickStorage(
-  './states/gimmicks'   // Only state path needed for gimmicks
+  './states/gimmicks' // Only state path needed for gimmicks
 );
 
 // Initialize with existing data
@@ -94,7 +91,7 @@ WorldManager.initialize({
 To use LLM features, you need to configure API keys for the supported platforms. Set the following environment variables:
 
 - **OpenAI**: `OPENAI_API_KEY=your_openai_api_key`
-- **Gemini**: `GEMINI_API_KEY=your_gemini_api_key`  
+- **Gemini**: `GEMINI_API_KEY=your_gemini_api_key`
 - **Anthropic**: `ANTHROPIC_API_KEY=your_anthropic_api_key`
 
 You can set these in several ways:

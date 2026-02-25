@@ -8,7 +8,6 @@ import {
   GimmickRepository,
   GimmickState,
   LocationId,
-  sleep,
 } from '@little-samo/samo-ai';
 import {
   createDeepCopy,
@@ -40,7 +39,7 @@ export class GimmickStorage implements GimmickRepository {
     locations: new Map(),
   };
 
-  private saveInProgress: boolean = false;
+  private savePromise: Promise<void> = Promise.resolve();
   private saveQueue: Map<
     LocationId,
     { timeoutId: NodeJS.Timeout; resolve: () => void }
@@ -111,16 +110,15 @@ export class GimmickStorage implements GimmickRepository {
 
     return new Promise<void>((resolve) => {
       const timeoutId = setTimeout(async () => {
+        this.saveQueue.delete(locationId);
         try {
           await this.executeSave(locationId);
-          this.saveQueue.delete(locationId);
-          resolve();
         } catch (error) {
           console.error(
             `Error saving gimmick states for location ${locationId}:`,
             error
           );
-          this.saveQueue.delete(locationId);
+        } finally {
           resolve();
         }
       }, this.saveQueueDelay);
@@ -131,22 +129,10 @@ export class GimmickStorage implements GimmickRepository {
 
   /**
    * Execute the actual save operation to filesystem
-   * Uses a lock to prevent concurrent writes
+   * Uses a promise chain to prevent concurrent writes
    */
   private async executeSave(locationId: LocationId): Promise<void> {
-    const waitForLock = async (): Promise<void> => {
-      if (this.saveInProgress) {
-        await sleep(10);
-        return waitForLock();
-      }
-      return;
-    };
-
-    await waitForLock();
-
-    try {
-      this.saveInProgress = true;
-
+    const saveOperation = this.savePromise.then(async () => {
       const locationData = this.database.locations.get(locationId);
       if (!locationData) {
         throw new Error(`Location gimmick data not found: ${locationId}`);
@@ -158,9 +144,10 @@ export class GimmickStorage implements GimmickRepository {
 
       const stateJson = JSON.stringify(stateData, null, 2);
       await fs.writeFile(locationData.statePath, stateJson);
-    } finally {
-      this.saveInProgress = false;
-    }
+    });
+
+    this.savePromise = saveOperation.catch(() => {});
+    await saveOperation;
   }
 
   /**

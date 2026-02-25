@@ -8,7 +8,6 @@ import {
   UserModel,
   UserRepository,
   UserState,
-  sleep,
 } from '@little-samo/samo-ai';
 import {
   createDeepCopy,
@@ -42,7 +41,7 @@ export class UserStorage implements UserRepository {
     users: new Map(),
   };
 
-  private saveInProgress: boolean = false;
+  private savePromise: Promise<void> = Promise.resolve();
   private saveQueue: Map<
     UserId,
     { timeoutId: NodeJS.Timeout; resolve: () => void }
@@ -138,13 +137,12 @@ export class UserStorage implements UserRepository {
 
     return new Promise<void>((resolve) => {
       const timeoutId = setTimeout(async () => {
+        this.saveQueue.delete(userId);
         try {
           await this.executeSave(userId);
-          this.saveQueue.delete(userId);
-          resolve();
         } catch (error) {
           console.error(`Error saving state for user ${userId}:`, error);
-          this.saveQueue.delete(userId);
+        } finally {
           resolve();
         }
       }, this.saveQueueDelay);
@@ -156,22 +154,10 @@ export class UserStorage implements UserRepository {
 
   /**
    * Execute the actual save operation to filesystem
-   * Uses a lock to prevent concurrent writes
+   * Uses a promise chain to prevent concurrent writes
    */
   private async executeSave(userId: UserId): Promise<void> {
-    const waitForLock = async (): Promise<void> => {
-      if (this.saveInProgress) {
-        await sleep(10);
-        return waitForLock();
-      }
-      return;
-    };
-
-    await waitForLock();
-
-    try {
-      this.saveInProgress = true;
-
+    const saveOperation = this.savePromise.then(async () => {
       const userData = this.database.users.get(userId);
       if (!userData) {
         throw new Error(`User not found: ${userId}`);
@@ -183,9 +169,10 @@ export class UserStorage implements UserRepository {
 
       const stateJson = JSON.stringify(stateData, null, 2);
       await fs.writeFile(userData.statePath, stateJson);
-    } finally {
-      this.saveInProgress = false;
-    }
+    });
+
+    this.savePromise = saveOperation.catch(() => {});
+    await saveOperation;
   }
 
   /**

@@ -22,7 +22,7 @@ export function convertDatesToInstances<T>(obj: T): T {
     for (const key in obj) {
       if (
         typeof obj[key] === 'string' &&
-        /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(obj[key])
+        /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(obj[key] as string)
       ) {
         (obj as Record<string, unknown>)[key] = new Date(obj[key] as string);
       } else if (typeof obj[key] === 'object') {
@@ -31,6 +31,11 @@ export function convertDatesToInstances<T>(obj: T): T {
         );
       }
     }
+  } else if (
+    typeof obj === 'string' &&
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(obj)
+  ) {
+    return new Date(obj) as unknown as T;
   }
 
   return obj;
