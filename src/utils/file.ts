@@ -1,6 +1,13 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 
+import { sleep } from './sleep';
+
+const IS_WINDOWS = process.platform === 'win32';
+const WINDOWS_TRANSIENT_CODES = new Set(['EPERM', 'EBUSY', 'EACCES']);
+const RENAME_MAX_RETRIES = IS_WINDOWS ? 3 : 1;
+const RENAME_RETRY_MS = 100;
+
 /**
  * Check if a file exists asynchronously
  */
@@ -34,23 +41,38 @@ export async function ensureDirectoryExists(dirPath: string): Promise<void> {
 
 /**
  * Atomically write data to a file by writing to a temp file first, then renaming.
- * Prevents data corruption if the process crashes mid-write.
+ * On Windows, retries rename on transient EPERM/EBUSY/EACCES from antivirus
+ * or delayed handle release.
  */
 export async function atomicWriteFile(
   filePath: string,
   data: string
 ): Promise<void> {
   const tmpPath = `${filePath}.${process.pid}.tmp`;
-  try {
-    await fs.writeFile(tmpPath, data, 'utf-8');
-    await fs.rename(tmpPath, filePath);
-  } catch (error) {
+
+  await fs.writeFile(tmpPath, data, 'utf-8');
+
+  for (let attempt = 0; attempt < RENAME_MAX_RETRIES; attempt++) {
     try {
-      await fs.unlink(tmpPath);
-    } catch {
-      // Ignore cleanup errors
+      await fs.rename(tmpPath, filePath);
+      return;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      const retryable =
+        IS_WINDOWS && code != null && WINDOWS_TRANSIENT_CODES.has(code);
+
+      if (retryable && attempt < RENAME_MAX_RETRIES - 1) {
+        await sleep(RENAME_RETRY_MS);
+        continue;
+      }
+
+      try {
+        await fs.unlink(tmpPath);
+      } catch {
+        // Ignore cleanup errors
+      }
+      throw error;
     }
-    throw error;
   }
 }
 
