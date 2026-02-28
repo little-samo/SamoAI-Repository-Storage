@@ -19,6 +19,7 @@ import {
   ensureDirectoryExists,
   readJsonFile,
   writeJsonFile,
+  SaveQueue,
 } from '@little-samo/samo-ai-repository-storage/utils';
 
 /**
@@ -48,12 +49,9 @@ export class AgentStorage implements AgentRepository {
     agents: new Map(),
   };
 
-  private savePromise: Promise<void> = Promise.resolve();
-  private saveQueue: Map<
-    AgentId,
-    { timeoutId: NodeJS.Timeout; resolve: () => void }
-  > = new Map();
-  private saveQueueDelay: number = 50;
+  private saves = new SaveQueue<AgentId>(50, (agentId) =>
+    this.executeSave(agentId)
+  );
 
   public constructor(
     private readonly modelsBasePath: string,
@@ -144,56 +142,22 @@ export class AgentStorage implements AgentRepository {
     return Array.from(this.database.agents.keys());
   }
 
-  /**
-   * Queue state save operation with debouncing
-   * @param agentId The agent ID to save state for
-   */
   private async saveState(agentId: AgentId): Promise<void> {
-    if (this.saveQueue.has(agentId)) {
-      // Resolve previous promise when clearing timeout
-      const queueItem = this.saveQueue.get(agentId)!;
-      clearTimeout(queueItem.timeoutId);
-      queueItem.resolve(); // Resolve the previous promise
-    }
-
-    return new Promise<void>((resolve) => {
-      const timeoutId = setTimeout(async () => {
-        this.saveQueue.delete(agentId);
-        try {
-          await this.executeSave(agentId);
-        } catch (error) {
-          console.error(`Error saving state for agent ${agentId}:`, error);
-        } finally {
-          resolve();
-        }
-      }, this.saveQueueDelay);
-
-      // Store both the timeout ID and the resolve function
-      this.saveQueue.set(agentId, { timeoutId, resolve });
-    });
+    await this.saves.requestSave(agentId);
   }
 
-  /**
-   * Execute the actual save operation to filesystem
-   * Uses a promise chain to prevent concurrent writes
-   */
   private async executeSave(agentId: AgentId): Promise<void> {
-    const saveOperation = this.savePromise.then(async () => {
-      const agentData = this.database.agents.get(agentId);
-      if (!agentData) {
-        throw new Error(`Agent not found: ${agentId}`);
-      }
+    const agentData = this.database.agents.get(agentId);
+    if (!agentData) {
+      throw new Error(`Agent not found: ${agentId}`);
+    }
 
-      const stateData = {
-        state: agentData.state,
-        entityStates: Object.fromEntries(agentData.entityStates),
-      };
+    const stateData = {
+      state: agentData.state,
+      entityStates: Object.fromEntries(agentData.entityStates),
+    };
 
-      await writeJsonFile(agentData.statePath, stateData);
-    });
-
-    this.savePromise = saveOperation.catch(() => {});
-    await saveOperation;
+    await writeJsonFile(agentData.statePath, stateData);
   }
 
   /**

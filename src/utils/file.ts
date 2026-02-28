@@ -3,8 +3,6 @@ import * as path from 'path';
 
 /**
  * Check if a file exists asynchronously
- * @param filePath Path to the file to check
- * @returns Promise<boolean> true if file exists, false otherwise
  */
 export async function fileExists(filePath: string): Promise<boolean> {
   try {
@@ -15,12 +13,15 @@ export async function fileExists(filePath: string): Promise<boolean> {
   }
 }
 
+const knownDirectories = new Set<string>();
+
 /**
- * Ensure directory exists by creating it if it doesn't exist
- * @param dirPath Path to the directory to ensure exists
- * @returns Promise<void>
+ * Ensure directory exists, with an in-memory cache to skip redundant syscalls.
  */
 export async function ensureDirectoryExists(dirPath: string): Promise<void> {
+  if (knownDirectories.has(dirPath)) {
+    return;
+  }
   try {
     await fs.mkdir(dirPath, { recursive: true });
   } catch (error) {
@@ -28,12 +29,12 @@ export async function ensureDirectoryExists(dirPath: string): Promise<void> {
       throw error;
     }
   }
+  knownDirectories.add(dirPath);
 }
 
 /**
  * Atomically write data to a file by writing to a temp file first, then renaming.
- * Prevents data corruption if the process crashes mid-write, since rename is atomic
- * on most filesystems.
+ * Prevents data corruption if the process crashes mid-write.
  */
 export async function atomicWriteFile(
   filePath: string,
@@ -44,7 +45,6 @@ export async function atomicWriteFile(
     await fs.writeFile(tmpPath, data, 'utf-8');
     await fs.rename(tmpPath, filePath);
   } catch (error) {
-    // Clean up temp file on failure
     try {
       await fs.unlink(tmpPath);
     } catch {

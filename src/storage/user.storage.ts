@@ -14,6 +14,7 @@ import {
   ensureDirectoryExists,
   readJsonFile,
   writeJsonFile,
+  SaveQueue,
 } from '@little-samo/samo-ai-repository-storage/utils';
 
 /**
@@ -42,12 +43,9 @@ export class UserStorage implements UserRepository {
     users: new Map(),
   };
 
-  private savePromise: Promise<void> = Promise.resolve();
-  private saveQueue: Map<
-    UserId,
-    { timeoutId: NodeJS.Timeout; resolve: () => void }
-  > = new Map();
-  private saveQueueDelay: number = 50;
+  private saves = new SaveQueue<UserId>(50, (userId) =>
+    this.executeSave(userId)
+  );
 
   public constructor(
     private readonly modelsBasePath: string,
@@ -125,55 +123,21 @@ export class UserStorage implements UserRepository {
     return Array.from(this.database.users.keys());
   }
 
-  /**
-   * Queue state save operation with debouncing
-   * @param userId The user ID to save state for
-   */
   private async saveState(userId: UserId): Promise<void> {
-    if (this.saveQueue.has(userId)) {
-      // Resolve previous promise when clearing timeout
-      const queueItem = this.saveQueue.get(userId)!;
-      clearTimeout(queueItem.timeoutId);
-      queueItem.resolve(); // Resolve the previous promise
-    }
-
-    return new Promise<void>((resolve) => {
-      const timeoutId = setTimeout(async () => {
-        this.saveQueue.delete(userId);
-        try {
-          await this.executeSave(userId);
-        } catch (error) {
-          console.error(`Error saving state for user ${userId}:`, error);
-        } finally {
-          resolve();
-        }
-      }, this.saveQueueDelay);
-
-      // Store both the timeout ID and the resolve function
-      this.saveQueue.set(userId, { timeoutId, resolve });
-    });
+    await this.saves.requestSave(userId);
   }
 
-  /**
-   * Execute the actual save operation to filesystem
-   * Uses a promise chain to prevent concurrent writes
-   */
   private async executeSave(userId: UserId): Promise<void> {
-    const saveOperation = this.savePromise.then(async () => {
-      const userData = this.database.users.get(userId);
-      if (!userData) {
-        throw new Error(`User not found: ${userId}`);
-      }
+    const userData = this.database.users.get(userId);
+    if (!userData) {
+      throw new Error(`User not found: ${userId}`);
+    }
 
-      const stateData = {
-        state: userData.state,
-      };
+    const stateData = {
+      state: userData.state,
+    };
 
-      await writeJsonFile(userData.statePath, stateData);
-    });
-
-    this.savePromise = saveOperation.catch(() => {});
-    await saveOperation;
+    await writeJsonFile(userData.statePath, stateData);
   }
 
   /**

@@ -22,6 +22,7 @@ import {
   ensureDirectoryExists,
   readJsonFile,
   writeJsonFile,
+  SaveQueue,
 } from '@little-samo/samo-ai-repository-storage/utils';
 
 /**
@@ -52,12 +53,9 @@ export class LocationStorage implements LocationRepository {
     locations: new Map(),
   };
 
-  private savePromise: Promise<void> = Promise.resolve();
-  private saveQueue: Map<
-    LocationId,
-    { timeoutId: NodeJS.Timeout; resolve: () => void }
-  > = new Map();
-  private saveQueueDelay: number = 50;
+  private saves = new SaveQueue<LocationId>(50, (locationId) =>
+    this.executeSave(locationId)
+  );
 
   public constructor(
     private readonly modelsBasePath: string,
@@ -155,58 +153,23 @@ export class LocationStorage implements LocationRepository {
     return Array.from(this.database.locations.keys());
   }
 
-  /**
-   * Queue state save operation with debouncing
-   * @param locationId The location ID to save state for
-   */
   private async saveState(locationId: LocationId): Promise<void> {
-    if (this.saveQueue.has(locationId)) {
-      const queueItem = this.saveQueue.get(locationId)!;
-      clearTimeout(queueItem.timeoutId);
-      queueItem.resolve();
-    }
-
-    return new Promise<void>((resolve) => {
-      const timeoutId = setTimeout(async () => {
-        this.saveQueue.delete(locationId);
-        try {
-          await this.executeSave(locationId);
-        } catch (error) {
-          console.error(
-            `Error saving state for location ${locationId}:`,
-            error
-          );
-        } finally {
-          resolve();
-        }
-      }, this.saveQueueDelay);
-
-      this.saveQueue.set(locationId, { timeoutId, resolve });
-    });
+    await this.saves.requestSave(locationId);
   }
 
-  /**
-   * Execute the actual save operation to filesystem
-   * Uses a promise chain to prevent concurrent writes
-   */
   private async executeSave(locationId: LocationId): Promise<void> {
-    const saveOperation = this.savePromise.then(async () => {
-      const locationData = this.database.locations.get(locationId);
-      if (!locationData) {
-        throw new Error(`Location not found: ${locationId}`);
-      }
+    const locationData = this.database.locations.get(locationId);
+    if (!locationData) {
+      throw new Error(`Location not found: ${locationId}`);
+    }
 
-      const stateData = {
-        state: locationData.state,
-        messages: locationData.messages,
-        entityStates: Object.fromEntries(locationData.entityStates),
-      };
+    const stateData = {
+      state: locationData.state,
+      messages: locationData.messages,
+      entityStates: Object.fromEntries(locationData.entityStates),
+    };
 
-      await writeJsonFile(locationData.statePath, stateData);
-    });
-
-    this.savePromise = saveOperation.catch(() => {});
-    await saveOperation;
+    await writeJsonFile(locationData.statePath, stateData);
   }
 
   /**

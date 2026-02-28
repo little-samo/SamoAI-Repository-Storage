@@ -15,6 +15,7 @@ import {
   ensureDirectoryExists,
   readJsonFile,
   writeJsonFile,
+  SaveQueue,
 } from '@little-samo/samo-ai-repository-storage/utils';
 
 /**
@@ -41,12 +42,9 @@ export class ItemStorage implements ItemRepository {
     inventories: new Map(),
   };
 
-  private savePromise: Promise<void> = Promise.resolve();
-  private saveQueue: Map<
-    EntityKey,
-    { timeoutId: NodeJS.Timeout; resolve: () => void }
-  > = new Map();
-  private saveQueueDelay: number = 50;
+  private saves = new SaveQueue<EntityKey>(50, (entityKey) =>
+    this.executeSave(entityKey)
+  );
   private nextItemId: number = 1;
 
   public constructor(private readonly statesBasePath: string) {}
@@ -131,52 +129,18 @@ export class ItemStorage implements ItemRepository {
     }
   }
 
-  /**
-   * Queue state save operation with debouncing
-   */
   private async saveState(entityKey: EntityKey): Promise<void> {
-    if (this.saveQueue.has(entityKey)) {
-      const queueItem = this.saveQueue.get(entityKey)!;
-      clearTimeout(queueItem.timeoutId);
-      queueItem.resolve();
-    }
-
-    return new Promise<void>((resolve) => {
-      const timeoutId = setTimeout(async () => {
-        this.saveQueue.delete(entityKey);
-        try {
-          await this.executeSave(entityKey);
-        } catch (error) {
-          console.error(
-            `Error saving item states for entity ${entityKey}:`,
-            error
-          );
-        } finally {
-          resolve();
-        }
-      }, this.saveQueueDelay);
-
-      this.saveQueue.set(entityKey, { timeoutId, resolve });
-    });
+    await this.saves.requestSave(entityKey);
   }
 
-  /**
-   * Execute the actual save operation to filesystem
-   * Uses a promise chain to prevent concurrent writes
-   */
   private async executeSave(entityKey: EntityKey): Promise<void> {
-    const saveOperation = this.savePromise.then(async () => {
-      const ownerData = this.database.inventories.get(entityKey);
-      if (!ownerData) {
-        throw new Error(`Entity inventory not found: ${entityKey}`);
-      }
+    const ownerData = this.database.inventories.get(entityKey);
+    if (!ownerData) {
+      throw new Error(`Entity inventory not found: ${entityKey}`);
+    }
 
-      const stateData = { items: Object.fromEntries(ownerData.items) };
-      await writeJsonFile(ownerData.statePath, stateData);
-    });
-
-    this.savePromise = saveOperation.catch(() => {});
-    await saveOperation;
+    const stateData = { items: Object.fromEntries(ownerData.items) };
+    await writeJsonFile(ownerData.statePath, stateData);
   }
 
   /**
