@@ -16,6 +16,9 @@ export class SaveQueue<K = string> {
   private activeSaves = new Set<K>();
   private dirtyWhileSaving = new Set<K>();
 
+  // Optional: resolve functions for pending promises
+  private pendingResolvers = new Map<K, Array<() => void>>();
+
   public constructor(
     private readonly delayMs: number,
     private readonly saveFn: (key: K) => Promise<void>,
@@ -24,25 +27,34 @@ export class SaveQueue<K = string> {
 
   /**
    * Request a save for the given key.
-   * - If idle: debounces then saves
-   * - If already saving: marks dirty, resolves immediately (save will follow)
+   * - If idle: waits delayMs then saves
+   * - If already waiting for delay: joins the existing wait
+   * - If already saving: marks dirty, save will follow after current save
    */
   public async requestSave(key: K): Promise<void> {
-    if (this.activeSaves.has(key)) {
-      this.dirtyWhileSaving.add(key);
-      return;
-    }
-
-    const existing = this.debounceTimers.get(key);
-    if (existing) {
-      clearTimeout(existing);
-    }
-
     return new Promise<void>((resolve) => {
+      // Queue the resolve function for the requested save.
+      let resolvers = this.pendingResolvers.get(key);
+      if (!resolvers) {
+        resolvers = [];
+        this.pendingResolvers.set(key, resolvers);
+      }
+      resolvers.push(resolve);
+
+      if (this.activeSaves.has(key)) {
+        this.dirtyWhileSaving.add(key);
+        return;
+      }
+
+      if (this.debounceTimers.has(key)) {
+        // If a save is already scheduled, ignore without resetting the timer.
+        // When the existing timer expires, it will flush and resolve all pending promises.
+        return;
+      }
+
       const timer = setTimeout(async () => {
         this.debounceTimers.delete(key);
         await this.flush(key);
-        resolve();
       }, this.delayMs);
       this.debounceTimers.set(key, timer);
     });
@@ -76,6 +88,15 @@ export class SaveQueue<K = string> {
       }
     } finally {
       this.activeSaves.delete(key);
+
+      // Resolve all pending promises.
+      const resolvers = this.pendingResolvers.get(key);
+      if (resolvers) {
+        this.pendingResolvers.delete(key);
+        for (const resolve of resolvers) {
+          resolve();
+        }
+      }
     }
   }
 }
