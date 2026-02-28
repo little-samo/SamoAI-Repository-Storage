@@ -1,4 +1,3 @@
-import * as fs from 'fs/promises';
 import * as path from 'path';
 
 import {
@@ -11,8 +10,9 @@ import {
 } from '@little-samo/samo-ai';
 import {
   createDeepCopy,
-  fileExists,
   ensureDirectoryExists,
+  readJsonFile,
+  writeJsonFile,
 } from '@little-samo/samo-ai-repository-storage/utils';
 
 /**
@@ -80,13 +80,13 @@ export class GimmickStorage implements GimmickRepository {
     });
 
     try {
-      if (await fileExists(statePath)) {
-        const stateContent = await fs.readFile(statePath, 'utf-8');
-        const stateData = JSON.parse(stateContent);
+      const stateData = await readJsonFile<{
+        gimmickStates?: Record<string, GimmickState>;
+      }>(statePath);
 
-        const gimmickStates = stateData.gimmickStates || {};
+      if (stateData?.gimmickStates) {
         this.database.locations.get(locationId)!.gimmickStates = new Map(
-          Object.entries(gimmickStates) as [GimmickId, GimmickState][]
+          Object.entries(stateData.gimmickStates) as [GimmickId, GimmickState][]
         );
       }
     } catch (error) {
@@ -142,9 +142,7 @@ export class GimmickStorage implements GimmickRepository {
         gimmickStates: Object.fromEntries(locationData.gimmickStates),
       };
 
-      const stateJson = JSON.stringify(stateData, null, 2);
-      await ensureDirectoryExists(this.statesBasePath);
-      await fs.writeFile(locationData.statePath, stateJson);
+      await writeJsonFile(locationData.statePath, stateData);
     });
 
     this.savePromise = saveOperation.catch(() => {});
@@ -201,12 +199,11 @@ export class GimmickStorage implements GimmickRepository {
   ): Promise<Map<GimmickId, GimmickState>> {
     const result = new Map<GimmickId, GimmickState>();
 
-    await Promise.all(
-      gimmickIds.map(async (gimmickId) => {
-        const state = await this.getOrCreateGimmickState(locationId, gimmickId);
-        result.set(gimmickId, state);
-      })
-    );
+    // Sequential to avoid concurrent saves to the same location file
+    for (const gimmickId of gimmickIds) {
+      const state = await this.getOrCreateGimmickState(locationId, gimmickId);
+      result.set(gimmickId, state);
+    }
 
     return result;
   }
@@ -220,21 +217,44 @@ export class GimmickStorage implements GimmickRepository {
     gimmickId: GimmickId,
     occupierType?: EntityType,
     occupierId?: EntityId,
-    occupationUntil?: Date
+    occupationUntil?: Date,
+    options?: {
+      currentOccupierType?: EntityType;
+      currentOccupierId?: EntityId;
+    }
   ): Promise<void> {
     await this.ensureLocationExists(locationId);
 
     const locationData = this.database.locations.get(locationId)!;
 
-    // Ensure gimmick state exists
     if (!locationData.gimmickStates.has(gimmickId)) {
       await this.getOrCreateGimmickState(locationId, gimmickId);
     }
 
     const gimmickState = locationData.gimmickStates.get(gimmickId)!;
-    gimmickState.occupierType = occupierType;
-    gimmickState.occupierId = occupierId;
-    gimmickState.occupationUntil = occupationUntil;
+
+    if (
+      options?.currentOccupierType !== undefined &&
+      gimmickState.occupierType !== options.currentOccupierType
+    ) {
+      return;
+    }
+    if (
+      options?.currentOccupierId !== undefined &&
+      gimmickState.occupierId !== options.currentOccupierId
+    ) {
+      return;
+    }
+
+    if (occupierType) {
+      gimmickState.occupierType = occupierType;
+      gimmickState.occupierId = occupierId;
+      gimmickState.occupationUntil = occupationUntil;
+    } else {
+      delete gimmickState.occupierType;
+      delete gimmickState.occupierId;
+      delete gimmickState.occupationUntil;
+    }
     gimmickState.updatedAt = new Date();
 
     await this.saveState(locationId);

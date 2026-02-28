@@ -1,4 +1,3 @@
-import * as fs from 'fs/promises';
 import * as path from 'path';
 
 import {
@@ -13,6 +12,8 @@ import {
   createDeepCopy,
   fileExists,
   ensureDirectoryExists,
+  readJsonFile,
+  writeJsonFile,
 } from '@little-samo/samo-ai-repository-storage/utils';
 
 /**
@@ -83,8 +84,10 @@ export class UserStorage implements UserRepository {
 
     const statePath = path.join(this.statesBasePath, filename);
 
-    const modelContent = await fs.readFile(modelPath, 'utf-8');
-    const modelJson = JSON.parse(modelContent);
+    const modelJson = await readJsonFile<UserModel>(modelPath);
+    if (!modelJson) {
+      throw new Error(`Failed to read model file: ${modelPath}`);
+    }
 
     const userId = Number(modelJson.id) as UserId;
     this.database.users.set(userId, {
@@ -98,20 +101,19 @@ export class UserStorage implements UserRepository {
       statePath,
     });
 
-    if (await fileExists(statePath)) {
-      try {
-        const stateContent = await fs.readFile(statePath, 'utf-8');
-        const stateData = JSON.parse(stateContent);
+    try {
+      const stateData = await readJsonFile<{ state: UserState }>(statePath);
 
+      if (stateData) {
         this.database.users.get(userId)!.state = stateData.state || {
           userId: userId,
         };
-      } catch (error) {
-        console.warn(
-          `Failed to load user state file ${statePath}, using default state:`,
-          error
-        );
       }
+    } catch (error) {
+      console.warn(
+        `Failed to load user state file ${statePath}, using default state:`,
+        error
+      );
     }
   }
 
@@ -167,9 +169,7 @@ export class UserStorage implements UserRepository {
         state: userData.state,
       };
 
-      const stateJson = JSON.stringify(stateData, null, 2);
-      await ensureDirectoryExists(this.statesBasePath);
-      await fs.writeFile(userData.statePath, stateJson);
+      await writeJsonFile(userData.statePath, stateData);
     });
 
     this.savePromise = saveOperation.catch(() => {});
@@ -251,10 +251,7 @@ export class UserStorage implements UserRepository {
       statePath,
     });
 
-    // Save the model to file
-    const modelJson = JSON.stringify(userModel, null, 2);
-    await ensureDirectoryExists(this.modelsBasePath);
-    await fs.writeFile(modelPath, modelJson);
+    await writeJsonFile(modelPath, userModel);
 
     // Return a deep copy to prevent external modification
     return createDeepCopy(userModel);

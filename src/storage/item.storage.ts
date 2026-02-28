@@ -1,4 +1,3 @@
-import * as fs from 'fs/promises';
 import * as path from 'path';
 
 import {
@@ -13,8 +12,9 @@ import {
 } from '@little-samo/samo-ai';
 import {
   createDeepCopy,
-  fileExists,
   ensureDirectoryExists,
+  readJsonFile,
+  writeJsonFile,
 } from '@little-samo/samo-ai-repository-storage/utils';
 
 /**
@@ -112,12 +112,16 @@ export class ItemStorage implements ItemRepository {
     });
 
     try {
-      if (await fileExists(statePath)) {
-        const stateContent = await fs.readFile(statePath, 'utf-8');
-        const stateData = JSON.parse(stateContent);
+      const stateData = await readJsonFile<{
+        items?: Record<string, ItemModel>;
+      }>(statePath);
 
-        this.database.inventories.get(entityKey)!.items =
-          stateData.items || new Map();
+      if (stateData?.items && typeof stateData.items === 'object') {
+        const itemsMap = new Map<ItemId, ItemModel>();
+        for (const [key, value] of Object.entries(stateData.items)) {
+          itemsMap.set(key as ItemId, value as ItemModel);
+        }
+        this.database.inventories.get(entityKey)!.items = itemsMap;
       }
     } catch (error) {
       console.warn(
@@ -168,9 +172,7 @@ export class ItemStorage implements ItemRepository {
       }
 
       const stateData = { items: Object.fromEntries(ownerData.items) };
-      const stateJson = JSON.stringify(stateData, null, 2);
-      await ensureDirectoryExists(this.statesBasePath);
-      await fs.writeFile(ownerData.statePath, stateJson);
+      await writeJsonFile(ownerData.statePath, stateData);
     });
 
     this.savePromise = saveOperation.catch(() => {});
@@ -202,7 +204,7 @@ export class ItemStorage implements ItemRepository {
 
       const ownerData = this.database.inventories.get(entityKey);
       result[entityKey] = ownerData
-        ? Object.values(ownerData.items).map((item) =>
+        ? Array.from(ownerData.items.values()).map((item) =>
             createDeepCopy(item as ItemModel)
           )
         : [];
@@ -215,7 +217,7 @@ export class ItemStorage implements ItemRepository {
 
       const ownerData = this.database.inventories.get(entityKey);
       result[entityKey] = ownerData
-        ? Object.values(ownerData.items).map((item) =>
+        ? Array.from(ownerData.items.values()).map((item) =>
             createDeepCopy(item as ItemModel)
           )
         : [];
@@ -298,7 +300,7 @@ export class ItemStorage implements ItemRepository {
     ownerEntityKey: EntityKey,
     item: ItemModel,
     count: number,
-    _options?: {
+    options?: {
       reason?: string;
       force?: boolean;
     }
@@ -318,7 +320,7 @@ export class ItemStorage implements ItemRepository {
       );
     }
 
-    if (itemInstance.count < count) {
+    if (!options?.force && itemInstance.count < count) {
       throw new Error(
         `Cannot remove ${count} items, only ${itemInstance.count} available`
       );
@@ -327,8 +329,7 @@ export class ItemStorage implements ItemRepository {
     itemInstance.count -= count;
     itemInstance.updatedAt = new Date();
 
-    // Remove item entirely if count reaches 0
-    if (itemInstance.count === 0) {
+    if (itemInstance.count <= 0) {
       ownerData.items.delete(item.id as ItemId);
     }
 
@@ -343,7 +344,7 @@ export class ItemStorage implements ItemRepository {
     item: ItemModel,
     targetEntityKey: EntityKey,
     count: number,
-    _options?: {
+    options?: {
       reason?: string;
       force?: boolean;
     }
@@ -355,29 +356,13 @@ export class ItemStorage implements ItemRepository {
     await this.ensureEntityExists(ownerEntityKey);
     await this.ensureEntityExists(targetEntityKey);
 
-    const ownerData = this.database.inventories.get(ownerEntityKey)!;
-    const itemInstance = ownerData.items.get(item.id as ItemId);
-
-    if (!itemInstance) {
-      throw new Error(
-        `Item with id ${item.id} not found in ${ownerEntityKey} inventory`
-      );
-    }
-
-    if (itemInstance.count < count) {
-      throw new Error(
-        `Cannot transfer ${count} items, only ${itemInstance.count} available`
-      );
-    }
-
-    // Remove from source owner
-    await this.removeItemModel(ownerEntityKey, item, count);
-
-    // Add to target owner
+    // Remove from source owner then add to target (sequential for consistency)
+    await this.removeItemModel(ownerEntityKey, item, count, options);
     await this.addOrCreateItemModel(
       targetEntityKey,
       item.itemDataId as ItemDataId,
-      count
+      count,
+      { reason: options?.reason }
     );
   }
 
@@ -392,7 +377,7 @@ export class ItemStorage implements ItemRepository {
       return [];
     }
 
-    return Object.values(ownerData.items).map((item) =>
+    return Array.from(ownerData.items.values()).map((item) =>
       createDeepCopy(item as ItemModel)
     );
   }
@@ -437,10 +422,11 @@ export class ItemStorage implements ItemRepository {
    * Find an item by id across all owners
    */
   public async findItemById(itemId: number): Promise<ItemModel | null> {
-    const itemIdStr = String(itemId);
-    for (const ownerData of Object.values(this.database.inventories)) {
-      if (ownerData.items[itemIdStr]) {
-        return createDeepCopy(ownerData.items[itemIdStr] as ItemModel);
+    const itemIdKey = String(itemId) as ItemId;
+    for (const ownerData of this.database.inventories.values()) {
+      const item = ownerData.items.get(itemIdKey);
+      if (item) {
+        return createDeepCopy(item as ItemModel);
       }
     }
     return null;

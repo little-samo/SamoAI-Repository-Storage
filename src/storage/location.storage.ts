@@ -1,4 +1,3 @@
-import * as fs from 'fs/promises';
 import * as path from 'path';
 
 import {
@@ -21,6 +20,8 @@ import {
   createDeepCopy,
   fileExists,
   ensureDirectoryExists,
+  readJsonFile,
+  writeJsonFile,
 } from '@little-samo/samo-ai-repository-storage/utils';
 
 /**
@@ -92,8 +93,10 @@ export class LocationStorage implements LocationRepository {
 
     const statePath = path.join(this.statesBasePath, filename);
 
-    const modelContent = await fs.readFile(modelPath, 'utf-8');
-    const modelJson = JSON.parse(modelContent);
+    const modelJson = await readJsonFile<LocationModel>(modelPath);
+    if (!modelJson) {
+      throw new Error(`Failed to read model file: ${modelPath}`);
+    }
 
     const locationId = Number(modelJson.id) as LocationId;
     this.database.locations.set(locationId, {
@@ -108,7 +111,7 @@ export class LocationStorage implements LocationRepository {
         pauseUpdateReason: null,
         pauseUpdateNextAgentId: null,
         images: [],
-        rendering: '',
+        rendering: null,
         mission: null,
         remainingAgentExecutions: null,
         createdAt: new Date(),
@@ -119,11 +122,14 @@ export class LocationStorage implements LocationRepository {
       entityStates: new Map(),
     });
 
-    if (await fileExists(statePath)) {
-      try {
-        const stateContent = await fs.readFile(statePath, 'utf-8');
-        const stateData = JSON.parse(stateContent);
+    try {
+      const stateData = await readJsonFile<{
+        state: LocationState;
+        messages?: LocationMessage[];
+        entityStates?: Record<string, LocationEntityState>;
+      }>(statePath);
 
+      if (stateData) {
         const locationData = this.database.locations.get(locationId)!;
         locationData.state = stateData.state;
         locationData.messages = stateData.messages || [];
@@ -132,12 +138,12 @@ export class LocationStorage implements LocationRepository {
             Object.entries(stateData.entityStates)
           );
         }
-      } catch (error) {
-        console.warn(
-          `Failed to load location state file ${statePath}, using default state:`,
-          error
-        );
       }
+    } catch (error) {
+      console.warn(
+        `Failed to load location state file ${statePath}, using default state:`,
+        error
+      );
     }
   }
 
@@ -196,9 +202,7 @@ export class LocationStorage implements LocationRepository {
         entityStates: Object.fromEntries(locationData.entityStates),
       };
 
-      const stateJson = JSON.stringify(stateData, null, 2);
-      await ensureDirectoryExists(this.statesBasePath);
-      await fs.writeFile(locationData.statePath, stateJson);
+      await writeJsonFile(locationData.statePath, stateData);
     });
 
     this.savePromise = saveOperation.catch(() => {});
@@ -281,7 +285,7 @@ export class LocationStorage implements LocationRepository {
         pauseUpdateReason: null,
         pauseUpdateNextAgentId: null,
         images: [],
-        rendering: '',
+        rendering: null,
         mission: null,
         remainingAgentExecutions: null,
         createdAt: new Date(),
@@ -292,10 +296,7 @@ export class LocationStorage implements LocationRepository {
       entityStates: new Map(),
     });
 
-    // Save the model to file
-    const modelJson = JSON.stringify(locationModel, null, 2);
-    await ensureDirectoryExists(this.modelsBasePath);
-    await fs.writeFile(modelPath, modelJson);
+    await writeJsonFile(modelPath, locationModel);
 
     // Return a deep copy to prevent external modification
     return createDeepCopy(locationModel);
@@ -525,15 +526,19 @@ export class LocationStorage implements LocationRepository {
       locationData.state.canvases = {};
     }
 
+    const now = new Date();
+    const existing = locationData.state.canvases[canvasName];
+
     locationData.state.canvases[canvasName] = {
+      ...existing,
       text,
       lastModifierEntityType: modifierEntityType,
       lastModifierEntityId: modifierEntityId,
-      createdAt: new Date(),
-      updatedAt: new Date(),
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
     };
 
-    locationData.state.updatedAt = new Date();
+    locationData.state.updatedAt = now;
     await this.saveState(locationId);
   }
 
@@ -775,13 +780,16 @@ export class LocationStorage implements LocationRepository {
       entityState.canvases = {};
     }
 
+    const now = new Date();
+    const existing = entityState.canvases[canvasName];
+
     entityState.canvases[canvasName] = {
       text,
-      createdAt: new Date(),
-      updatedAt: new Date(),
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
     };
 
-    entityState.updatedAt = new Date();
+    entityState.updatedAt = now;
     await this.saveState(locationId);
   }
 }

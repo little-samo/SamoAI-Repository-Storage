@@ -1,4 +1,3 @@
-import * as fs from 'fs/promises';
 import * as path from 'path';
 
 import {
@@ -18,6 +17,8 @@ import {
   createDeepCopy,
   fileExists,
   ensureDirectoryExists,
+  readJsonFile,
+  writeJsonFile,
 } from '@little-samo/samo-ai-repository-storage/utils';
 
 /**
@@ -89,8 +90,10 @@ export class AgentStorage implements AgentRepository {
 
     const statePath = path.join(this.statesBasePath, filename);
 
-    const modelContent = await fs.readFile(modelPath, 'utf-8');
-    const modelJson = JSON.parse(modelContent);
+    const modelJson = await readJsonFile<AgentModel>(modelPath);
+    if (!modelJson) {
+      throw new Error(`Failed to read model file: ${modelPath}`);
+    }
 
     const agentId = Number(modelJson.id) as AgentId;
     this.database.agents.set(agentId, {
@@ -107,11 +110,13 @@ export class AgentStorage implements AgentRepository {
       entityStates: new Map(),
     });
 
-    if (await fileExists(statePath)) {
-      try {
-        const stateContent = await fs.readFile(statePath, 'utf-8');
-        const stateData = JSON.parse(stateContent);
+    try {
+      const stateData = await readJsonFile<{
+        state: AgentState;
+        entityStates?: Record<string, AgentEntityState>;
+      }>(statePath);
 
+      if (stateData) {
         const agentData = this.database.agents.get(agentId)!;
         agentData.state = stateData.state;
         if (stateData.entityStates) {
@@ -122,12 +127,12 @@ export class AgentStorage implements AgentRepository {
             ][]
           );
         }
-      } catch (error) {
-        console.warn(
-          `Failed to load state file ${statePath}, using default state:`,
-          error
-        );
       }
+    } catch (error) {
+      console.warn(
+        `Failed to load state file ${statePath}, using default state:`,
+        error
+      );
     }
   }
 
@@ -184,9 +189,7 @@ export class AgentStorage implements AgentRepository {
         entityStates: Object.fromEntries(agentData.entityStates),
       };
 
-      const stateJson = JSON.stringify(stateData, null, 2);
-      await ensureDirectoryExists(this.statesBasePath);
-      await fs.writeFile(agentData.statePath, stateJson);
+      await writeJsonFile(agentData.statePath, stateData);
     });
 
     this.savePromise = saveOperation.catch(() => {});
@@ -269,10 +272,7 @@ export class AgentStorage implements AgentRepository {
       entityStates: new Map(),
     });
 
-    // Save the model to file
-    const modelJson = JSON.stringify(agentModel, null, 2);
-    await ensureDirectoryExists(this.modelsBasePath);
-    await fs.writeFile(modelPath, modelJson);
+    await writeJsonFile(modelPath, agentModel);
 
     // Return a deep copy to prevent external modification
     return createDeepCopy(agentModel);
@@ -354,6 +354,9 @@ export class AgentStorage implements AgentRepository {
       const entityStates: AgentEntityState[] = [];
 
       for (const targetAgentId of targetAgentIds) {
+        if (agentId === targetAgentId) {
+          continue;
+        }
         const entityState = await this.getOrCreateAgentEntityState(
           agentId,
           EntityType.Agent,
@@ -400,14 +403,15 @@ export class AgentStorage implements AgentRepository {
       createdAt: timestamp,
     } as unknown as AgentMemory;
 
-    if (index >= 0 && index < state.memories.length) {
-      // Important: Use deep copy to ensure memory doesn't reference external data
-      state.memories[index] = createDeepCopy(memoryObj);
-    } else if (index === state.memories.length) {
-      state.memories.push(createDeepCopy(memoryObj));
-    } else {
-      throw new Error(`Invalid memory index ${index}`);
+    // Fill gaps with empty memory objects when index exceeds current length
+    while (state.memories.length <= index) {
+      state.memories.push({
+        memory: '',
+        createdAt: new Date(),
+      } as unknown as AgentMemory);
     }
+
+    state.memories[index] = createDeepCopy(memoryObj);
 
     state.updatedAt = new Date();
     await this.saveState(agentId);
@@ -443,12 +447,15 @@ export class AgentStorage implements AgentRepository {
       createdAt: timestamp,
     } as unknown as AgentMemory;
 
-    if (index >= 0 && index < entityState.memories.length) {
-      // Important: Use deep copy to ensure memory doesn't reference external data
-      entityState.memories[index] = createDeepCopy(memoryObj);
-    } else {
-      entityState.memories.push(createDeepCopy(memoryObj));
+    // Fill gaps with empty memory objects when index exceeds current length
+    while (entityState.memories.length <= index) {
+      entityState.memories.push({
+        memory: '',
+        createdAt: new Date(),
+      } as unknown as AgentMemory);
     }
+
+    entityState.memories[index] = createDeepCopy(memoryObj);
 
     entityState.updatedAt = new Date();
     await this.saveState(agentId);
