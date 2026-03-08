@@ -1,7 +1,9 @@
+import { randomUUID } from 'crypto';
 import * as path from 'path';
 
 import {
   AgentId,
+  DayOfWeek,
   EntityId,
   EntityType,
   GimmickId,
@@ -10,6 +12,7 @@ import {
   LocationMessage,
   LocationModel,
   LocationRepository,
+  LocationScheduledMessageState,
   LocationState,
   UserId,
   LocationMeta,
@@ -34,6 +37,7 @@ interface LocationData {
   state: LocationState;
   statePath: string;
   messages: LocationMessage[];
+  scheduledMessages: LocationScheduledMessageState[];
   entityStates: Map<string, LocationEntityState>;
 }
 
@@ -116,6 +120,7 @@ export class LocationStorage implements LocationRepository {
         updatedAt: new Date(),
       },
       messages: [],
+      scheduledMessages: [],
       statePath,
       entityStates: new Map(),
     });
@@ -124,6 +129,7 @@ export class LocationStorage implements LocationRepository {
       const stateData = await readJsonFile<{
         state: LocationState;
         messages?: LocationMessage[];
+        scheduledMessages?: LocationScheduledMessageState[];
         entityStates?: Record<string, LocationEntityState>;
       }>(statePath);
 
@@ -131,6 +137,7 @@ export class LocationStorage implements LocationRepository {
         const locationData = this.database.locations.get(locationId)!;
         locationData.state = stateData.state;
         locationData.messages = stateData.messages || [];
+        locationData.scheduledMessages = stateData.scheduledMessages || [];
         if (stateData.entityStates) {
           locationData.entityStates = new Map(
             Object.entries(stateData.entityStates)
@@ -166,6 +173,7 @@ export class LocationStorage implements LocationRepository {
     const stateData = {
       state: locationData.state,
       messages: locationData.messages,
+      scheduledMessages: locationData.scheduledMessages,
       entityStates: Object.fromEntries(locationData.entityStates),
     };
 
@@ -255,6 +263,7 @@ export class LocationStorage implements LocationRepository {
         updatedAt: new Date(),
       },
       messages: [],
+      scheduledMessages: [],
       statePath,
       entityStates: new Map(),
     });
@@ -457,7 +466,9 @@ export class LocationStorage implements LocationRepository {
    */
   public async updateLocationStatePauseUpdateUntil(
     locationId: LocationId,
-    pauseUpdateUntil: Date | null
+    pauseUpdateUntil: Date | null,
+    pauseUpdateReason?: string | null,
+    pauseUpdateNextAgentId?: AgentId | null
   ): Promise<void> {
     const locationData = this.database.locations.get(locationId);
     if (!locationData) {
@@ -465,6 +476,8 @@ export class LocationStorage implements LocationRepository {
     }
 
     locationData.state.pauseUpdateUntil = pauseUpdateUntil;
+    locationData.state.pauseUpdateReason = pauseUpdateReason ?? null;
+    locationData.state.pauseUpdateNextAgentId = pauseUpdateNextAgentId ?? null;
     locationData.state.updatedAt = new Date();
     await this.saveState(locationId);
   }
@@ -754,5 +767,203 @@ export class LocationStorage implements LocationRepository {
 
     entityState.updatedAt = now;
     await this.saveState(locationId);
+  }
+
+  private findScheduledMessage(messageId: string): {
+    locationId: LocationId;
+    locationData: LocationData;
+    scheduledMessage: LocationScheduledMessageState;
+  } | null {
+    for (const [locationId, locationData] of this.database.locations) {
+      const scheduledMessage = locationData.scheduledMessages.find(
+        (item) => String(item.id) === messageId
+      );
+      if (scheduledMessage) {
+        return {
+          locationId,
+          locationData,
+          scheduledMessage,
+        };
+      }
+    }
+
+    return null;
+  }
+
+  public async getLocationScheduledMessageState(
+    messageId: string
+  ): Promise<LocationScheduledMessageState | null> {
+    const result = this.findScheduledMessage(messageId);
+    return result ? createDeepCopy(result.scheduledMessage) : null;
+  }
+
+  public async getAllDueLocationScheduledMessageStates(
+    locationId?: LocationId
+  ): Promise<LocationScheduledMessageState[]> {
+    const now = new Date();
+    const scheduledMessages: LocationScheduledMessageState[] = [];
+
+    const locations =
+      locationId !== undefined
+        ? [[locationId, this.database.locations.get(locationId)] as const]
+        : Array.from(this.database.locations.entries());
+
+    for (const [, locationData] of locations) {
+      if (!locationData) {
+        continue;
+      }
+
+      scheduledMessages.push(
+        ...locationData.scheduledMessages.filter((message) => {
+          if (!message.isActive || message.nextMessageAt === null) {
+            return false;
+          }
+
+          return new Date(message.nextMessageAt) <= now;
+        })
+      );
+    }
+
+    return createDeepCopy(scheduledMessages);
+  }
+
+  public async getLocationScheduledMessages(
+    locationId: LocationId
+  ): Promise<LocationScheduledMessageState[]> {
+    const locationData = this.database.locations.get(locationId);
+    if (!locationData) {
+      throw new Error(`Location not found: ${locationId}`);
+    }
+
+    const scheduledMessages = locationData.scheduledMessages
+      .filter((message) => message.isActive)
+      .sort(
+        (a, b) =>
+          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      );
+
+    return createDeepCopy(scheduledMessages);
+  }
+
+  public async createLocationScheduledMessage(
+    locationId: LocationId,
+    data: {
+      entityType: EntityType;
+      entityId: EntityId;
+      message: string;
+      nextMessageAt?: Date | null;
+      repeatTimesOfDay?: string[];
+      repeatDaysOfWeek?: DayOfWeek[];
+      repeatUntil?: Date;
+      maxRepeatCount?: number;
+    }
+  ): Promise<LocationScheduledMessageState> {
+    const locationData = this.database.locations.get(locationId);
+    if (!locationData) {
+      throw new Error(`Location not found: ${locationId}`);
+    }
+
+    const now = new Date();
+    const scheduledMessage: LocationScheduledMessageState = {
+      id: randomUUID(),
+      locationId,
+      entityType: data.entityType,
+      entityId: data.entityId,
+      message: data.message,
+      nextMessageAt: data.nextMessageAt ?? null,
+      repeatTimesOfDay: data.repeatTimesOfDay ?? [],
+      repeatDaysOfWeek: data.repeatDaysOfWeek ?? [],
+      repeatUntil: data.repeatUntil ?? null,
+      maxRepeatCount: data.maxRepeatCount ?? null,
+      sentCount: 0,
+      isActive: true,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    locationData.scheduledMessages.push(scheduledMessage);
+    locationData.state.updatedAt = now;
+    await this.saveState(locationId);
+
+    return createDeepCopy(scheduledMessage);
+  }
+
+  public async updateLocationScheduledMessage(
+    messageId: string,
+    data: {
+      entityType?: EntityType;
+      entityId?: EntityId;
+      message?: string;
+      nextMessageAt?: Date | null;
+      repeatTimesOfDay?: string[];
+      repeatDaysOfWeek?: DayOfWeek[];
+      repeatUntil?: Date;
+      maxRepeatCount?: number;
+      sentCount?: number;
+      isActive?: boolean;
+    }
+  ): Promise<LocationScheduledMessageState | null> {
+    const result = this.findScheduledMessage(messageId);
+    if (!result) {
+      return null;
+    }
+
+    const { locationId, locationData, scheduledMessage } = result;
+    if (data.entityType !== undefined) {
+      scheduledMessage.entityType = data.entityType;
+    }
+    if (data.entityId !== undefined) {
+      scheduledMessage.entityId = data.entityId;
+    }
+    if (data.message !== undefined) {
+      scheduledMessage.message = data.message;
+    }
+    if (data.nextMessageAt !== undefined) {
+      scheduledMessage.nextMessageAt = data.nextMessageAt;
+    }
+    if (data.repeatTimesOfDay !== undefined) {
+      scheduledMessage.repeatTimesOfDay = data.repeatTimesOfDay;
+    }
+    if (data.repeatDaysOfWeek !== undefined) {
+      scheduledMessage.repeatDaysOfWeek = data.repeatDaysOfWeek;
+    }
+    if (data.repeatUntil !== undefined) {
+      scheduledMessage.repeatUntil = data.repeatUntil;
+    }
+    if (data.maxRepeatCount !== undefined) {
+      scheduledMessage.maxRepeatCount = data.maxRepeatCount;
+    }
+    if (data.sentCount !== undefined) {
+      scheduledMessage.sentCount = data.sentCount;
+    }
+    if (data.isActive !== undefined) {
+      scheduledMessage.isActive = data.isActive;
+    }
+
+    const now = new Date();
+    scheduledMessage.updatedAt = now;
+    locationData.state.updatedAt = now;
+    await this.saveState(locationId);
+
+    return createDeepCopy(scheduledMessage);
+  }
+
+  public async deleteLocationScheduledMessage(
+    messageId: string
+  ): Promise<boolean> {
+    const result = this.findScheduledMessage(messageId);
+    if (!result) {
+      return false;
+    }
+
+    const { locationId, locationData, scheduledMessage } = result;
+    scheduledMessage.isActive = false;
+
+    const now = new Date();
+    scheduledMessage.updatedAt = now;
+    locationData.state.updatedAt = now;
+    await this.saveState(locationId);
+
+    return true;
   }
 }
